@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "name": "io.github.orldev/snail-mcp-e2e",
+  "description": "Task environments for .NET apps: run the app with its services, call its API, read logs, run tests",
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "nuget",
+      "identifier": "Snail.MCP.E2E",
+      "version": "0.1.0",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://127.0.0.1:8828/mcp"
+      },
+      "packageArguments": [],
+      "environmentVariables": []
+    }
+  ],
+  "repository": {
+    "url": "https://github.com/orldev/Snail.MCP.E2E",
+    "source": "github"
+  }
+}

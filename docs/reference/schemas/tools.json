@@ -1,0 +1,175 @@
+[
+  {
+    "name": "e2e_up",
+    "description": "Raise the task\u0027s environment from the working copy and wait until the app answers its health check.\nThe project describes it in .snail/environment.json: the app\u0027s project, port and health path, the services it\nneeds (a database, a broker) by image, and its end-to-end tests. The app is built and run with .NET in a network\nof its own, beside its services; only NuGet is reachable from it. The first raise restores packages and builds,\nwhich takes minutes; the wait is up to 300 seconds. Raise again after changing the code: the environment is\nreplaced by one running the current files. The state is one of ready, starting, failed or stopped; when it is failed, the answer carries\nthe end of the app\u0027s output with the reason.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "skill": null
+  },
+  {
+    "name": "e2e_status",
+    "description": "Say where the task\u0027s environment stands now without waiting: ready, starting, failed or stopped, each part\u0027s task state and restarts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "skill": null
+  },
+  {
+    "name": "e2e_down",
+    "description": "Stop the task\u0027s environment and its test runs. An environment unused for 60 minutes is stopped on its own.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "skill": null
+  },
+  {
+    "name": "e2e_http",
+    "description": "Send one HTTP request to the running app, as a client inside its network would, and get back the status, the\nheaders and the body. The body is cut at 16384 bytes. Raise the environment first with e2e_up.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "GET, POST, PUT, PATCH, DELETE or HEAD.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The path and query of the app, starting with /, such as /orders?status=new.",
+          "type": "string"
+        },
+        "body": {
+          "description": "The request body as text, such as a JSON document; empty sends none.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "contentType": {
+          "description": "The media type of the body; application/json when not given.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "headers": {
+          "description": "Extra request headers, each as \u0022Name: value\u0022, such as \u0022Authorization: Bearer abc\u0022.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "default": null
+        }
+      },
+      "required": [
+        "method",
+        "path"
+      ]
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "skill": null
+  },
+  {
+    "name": "e2e_logs",
+    "description": "Read the end of what one part of the environment printed: the app, one of its services by name, or tests for the\nlast test run. Both standard output and standard error come back, each up to 8192 bytes unless asked for more,\nat most 65536.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "part": {
+          "description": "app, a service name from the manifest, or tests.",
+          "type": "string"
+        },
+        "bytes": {
+          "description": "How many bytes of the end of each stream to read; 8192 when not given, at most 65536.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "part"
+      ]
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "skill": null
+  },
+  {
+    "name": "e2e_test",
+    "description": "Run the project\u0027s end-to-end tests against the running app: dotnet test of the test project the manifest names,\nin the environment\u0027s network, with the settings that point it at the app. The run gets up to 900 seconds,\nrestore and build included. The outcome is one of passed, failed, buildFailed, noTests or timedOut; the answer counts the tests, names up to 20 that\nfailed, and carries the end of the output, up to 16384 bytes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "filter": {
+          "description": "A dotnet test filter, such as FullyQualifiedName~Orders; empty runs every test.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "skill": null
+  },
+  {
+    "name": "e2e_diagnose",
+    "description": "Say whether this server can raise environments at all: Nomad\u0027s version, the network environments run in, and\nwhether the restore proxy is on. Changes nothing.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "skill": null
+  }
+]
