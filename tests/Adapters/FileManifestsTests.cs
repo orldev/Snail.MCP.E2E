@@ -7,7 +7,7 @@ namespace Snail.MCP.E2E.Tests.Adapters;
 
 public sealed class FileManifestsTests : IDisposable
 {
-    private readonly string _copy = Directory.CreateTempSubdirectory("e2e-copy-").FullName;
+    private readonly string _copy = TestFolder.Create();
 
     public void Dispose() => Directory.Delete(_copy, recursive: true);
 
