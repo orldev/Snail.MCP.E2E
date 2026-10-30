@@ -19,11 +19,18 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
     private static readonly TimeSpan Poll = TimeSpan.FromSeconds(2);
 
     /// <summary>Bytes of each stream of a test run read back; the summary is at the end, and the answer keeps less.</summary>
-    private const int TestLogBytes = 65536;
+    /// <remarks>
+    /// The failed tests are named from everything read, and a run of normal verbosity prints every test it ran: at 64 KB the
+    /// names of failures early in a long run fell outside the window. A quarter of the client's limit keeps the read short.
+    /// </remarks>
+    private const int TestLogBytes = 262144;
 
     /// <summary>How many times the logs are read before a dropped stream counts as Nomad's failure.</summary>
     /// <remarks>A client node drops a log stream now and then while the server is fine; the test run's result is only in that stream.</remarks>
     private const int LogAttempts = 2;
+
+    /// <summary>How long a test run left behind is given to be stopped.</summary>
+    private static readonly TimeSpan StopGrace = TimeSpan.FromSeconds(15);
 
     private static readonly string[] Ended = ["complete", "failed", "lost"];
 
@@ -46,6 +53,10 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
     /// <inheritdoc />
     public Task<TestRun> TestAsync(TestPlan plan, TimeSpan timeout, CancellationToken cancellationToken) =>
         AskAsync(() => RunTestsAsync(plan, timeout, cancellationToken), cancellationToken);
+
+    /// <inheritdoc />
+    public Task<int> StopTestRunsAsync(CancellationToken cancellationToken) =>
+        AskAsync(() => StopRunningTestsAsync(cancellationToken), cancellationToken);
 
     /// <inheritdoc />
     public Task<IReadOnlyList<TaskEnvironment>> ListAsync(CancellationToken cancellationToken) =>
@@ -128,28 +139,74 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
         }
     }
 
+    /// <summary>The run's job is stopped on every way out but its own end: a run nobody waits for any more would hold the node until its timeout.</summary>
     private async Task<TestRun> RunTestsAsync(TestPlan plan, TimeSpan timeout, CancellationToken cancellationToken)
     {
         await nomad.StopJobAsync(plan.Name.Tests, purge: true, cancellationToken);
         await nomad.RegisterJobAsync(EnvironmentJob.TestsOf(plan, Guid.NewGuid().ToString("N"), options.Value), cancellationToken);
 
-        long started = clock.GetTimestamp();
         bool hasEnded = false;
-
-        while (!hasEnded && clock.GetElapsedTime(started) < timeout)
+        try
         {
-            await Task.Delay(Poll, clock, cancellationToken);
-            var allocation = Latest(await nomad.ListAllocationsAsync(plan.Name.Tests, cancellationToken: cancellationToken));
-            hasEnded = allocation is not null && Ended.Contains(allocation.ClientStatus, StringComparer.Ordinal);
+            hasEnded = await HasEndedAsync(plan.Name.Tests, timeout, cancellationToken);
         }
-
-        if (!hasEnded)
-            await nomad.StopJobAsync(plan.Name.Tests, purge: false, cancellationToken);
+        finally
+        {
+            if (!hasEnded)
+                await StopLeftAsync(plan.Name.Tests);
+        }
 
         string stdout = await ReadLogsAsync(plan.Name, Parts.Tests, false, TestLogBytes, cancellationToken);
         string stderr = await ReadLogsAsync(plan.Name, Parts.Tests, true, TestLogBytes, cancellationToken);
 
-        return new TestRun($"{stdout}{stderr}", !hasEnded);
+        return new TestRun(Joined(stderr, stdout), !hasEnded);
+    }
+
+    /// <summary>Both streams as one output, the standard one last: the answer keeps the end, where dotnet test prints its summary.</summary>
+    /// <remarks>Joined the other way, a run that wrote to standard error had its summary pushed out of the end the answer keeps.</remarks>
+    internal static string Joined(string stderr, string stdout) =>
+        stderr.Length == 0 ? stdout : $"{stderr.TrimEnd()}\n{stdout}";
+
+    private async Task<bool> HasEndedAsync(string job, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        long started = clock.GetTimestamp();
+
+        while (clock.GetElapsedTime(started) < timeout)
+        {
+            await Task.Delay(Poll, clock, cancellationToken);
+            var allocation = Latest(await nomad.ListAllocationsAsync(job, cancellationToken: cancellationToken));
+
+            if (allocation is not null && Ended.Contains(allocation.ClientStatus, StringComparer.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Stops a test run left behind, its logs kept, on a time of its own: the caller's may be what ended.</summary>
+    /// <remarks>A stop that fails is left to the run's own timeout in its script and to the sweep at the next start.</remarks>
+    private async Task StopLeftAsync(string job)
+    {
+        using var grace = new CancellationTokenSource(StopGrace, clock);
+
+        try
+        {
+            await nomad.StopJobAsync(job, purge: false, grace.Token);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or NomadException or OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task<int> StopRunningTestsAsync(CancellationToken cancellationToken)
+    {
+        var jobs = await nomad.ListJobsAsync(TaskEnvironment.Prefix, cancellationToken: cancellationToken);
+        List<string> running = [.. jobs.Items.Where(job => TaskEnvironment.IsTestRun(job.Id) && !job.IsStopped && job.Status != "dead").Select(job => job.Id)];
+
+        foreach (string job in running)
+            await nomad.StopJobAsync(job, purge: false, cancellationToken);
+
+        return running.Count;
     }
 
     private async Task<IReadOnlyList<TaskEnvironment>> ListEnvironmentsAsync(CancellationToken cancellationToken)

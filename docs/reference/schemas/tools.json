@@ -1,14 +1,20 @@
 [
   {
     "name": "e2e_up",
-    "description": "Raise the task\u0027s environment from the working copy and wait until the app answers its health check.\nThe project describes it in .snail/environment.json: the app\u0027s project, port and health path, the services it\nneeds (a database, a broker) by image, and its end-to-end tests. The app is built and run with .NET in a network\nof its own, beside its services; only NuGet is reachable from it. The first raise restores packages and builds,\nwhich takes minutes; the wait is up to 300 seconds. Raise again after changing the code: the environment is\nreplaced by one running the current files. The state is one of ready, starting, failed or stopped; when it is failed, the answer carries\nthe end of the app\u0027s output with the reason.",
+    "description": "Raise the task\u0027s environment from the working copy and wait until the app answers its health check.\nThe project describes it in .snail/environment.json: the app\u0027s project, port and health path, the services it\nneeds (a database, a broker) by image, and its end-to-end tests. The app is built and run with .NET in a network\nof its own, beside its services; only NuGet is reachable from it. The first raise restores packages and builds,\nwhich takes minutes; the app is given up to 300 seconds to answer. Raise again after changing the code: the\nenvironment is replaced by one running the current files. The state is one of ready, starting, failed or stopped; when it is failed, the\nanswer carries the end of the app\u0027s output with the reason. It runs as a job: the answer comes within the wait with the result, or with the job\u0027s resource, whose text holds the result once it ends. One environment does one raise or test run at a time; the next waits its turn, and e2e_down cancels them.",
     "inputSchema": {
       "type": "object",
-      "properties": {}
+      "properties": {
+        "wait": {
+          "description": "Seconds to wait for the result before answering with the job in flight, 0 to 900; 0 answers at once.",
+          "type": "integer",
+          "default": 60
+        }
+      }
     },
     "annotations": {
       "destructiveHint": false,
-      "idempotentHint": true,
+      "idempotentHint": false,
       "openWorldHint": false,
       "readOnlyHint": false
     },
@@ -31,7 +37,7 @@
   },
   {
     "name": "e2e_down",
-    "description": "Stop the task\u0027s environment and its test runs. An environment unused for 60 minutes is stopped on its own.",
+    "description": "Stop the task\u0027s environment and its test runs, cancelling a raise or test run still at work. An environment\nunused for 60 minutes is stopped on its own.",
     "inputSchema": {
       "type": "object",
       "properties": {}
@@ -135,7 +141,7 @@
   },
   {
     "name": "e2e_test",
-    "description": "Run the project\u0027s end-to-end tests against the running app: dotnet test of the test project the manifest names,\nin the environment\u0027s network, with the settings that point it at the app. The run gets up to 900 seconds,\nrestore and build included. The outcome is one of passed, failed, buildFailed, noTests or timedOut; the answer counts the tests, names up to 20 that\nfailed, and carries the end of the output, up to 16384 bytes.",
+    "description": "Run the project\u0027s end-to-end tests against the running app: dotnet test of the test project the manifest names,\nin the environment\u0027s network, with the settings that point it at the app. The run gets up to 900 seconds,\nrestore and build included. The outcome is one of passed, failed, buildFailed, noTests or timedOut; the answer counts the tests, names up to 20 that\nfailed, and carries the end of the output, up to 16384 bytes. It runs as a job: the answer comes within the wait with the result, or with the job\u0027s resource, whose text holds the result once it ends. One environment does one raise or test run at a time; the next waits its turn, and e2e_down cancels them.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -146,6 +152,11 @@
             "null"
           ],
           "default": null
+        },
+        "wait": {
+          "description": "Seconds to wait for the result before answering with the job in flight, 0 to 900; 0 answers at once.",
+          "type": "integer",
+          "default": 60
         }
       }
     },

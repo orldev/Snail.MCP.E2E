@@ -17,4 +17,10 @@ internal static partial class Log
 
     [LoggerMessage(5, LogLevel.Warning, "The sweep of idle environments failed")]
     public static partial void SweepFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(6, LogLevel.Information, "Stopped {Count} test runs an earlier start left going")]
+    public static partial void LeftTestRunsStopped(ILogger logger, int count);
+
+    [LoggerMessage(7, LogLevel.Warning, "Could not stop the idle environment {Environment}")]
+    public static partial void IdleStopFailed(ILogger logger, string environment, Exception exception);
 }

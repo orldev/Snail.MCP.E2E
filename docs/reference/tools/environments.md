@@ -6,20 +6,28 @@ Raise the task's environment from the working copy and wait until the app answer
 The project describes it in .snail/environment.json: the app's project, port and health path, the services it
 needs (a database, a broker) by image, and its end-to-end tests. The app is built and run with .NET in a network
 of its own, beside its services; only NuGet is reachable from it. The first raise restores packages and builds,
-which takes minutes; the wait is up to 300 seconds. Raise again after changing the code: the environment is
-replaced by one running the current files. The state is one of ready, starting, failed or stopped; when it is failed, the answer carries
-the end of the app's output with the reason.
+which takes minutes; the app is given up to 300 seconds to answer. Raise again after changing the code: the
+environment is replaced by one running the current files. The state is one of ready, starting, failed or stopped; when it is failed, the
+answer carries the end of the app's output with the reason. It runs as a job: the answer comes within the wait with the result, or with the job's resource, whose text holds the result once it ends. One environment does one raise or test run at a time; the next waits its turn, and e2e_down cancels them.
 
-*only adds · repeat-safe · stays on this machine.*
+*only adds · every call adds · stays on this machine.*
 
-Takes no parameters.
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `wait` | `integer` | — | `60` | Seconds to wait for the result before answering with the job in flight, 0 to 900; 0 answers at once. |
 
 <details><summary>JSON Schema</summary>
 
 ```json
 {
   "type": "object",
-  "properties": {}
+  "properties": {
+    "wait": {
+      "description": "Seconds to wait for the result before answering with the job in flight, 0 to 900; 0 answers at once.",
+      "type": "integer",
+      "default": 60
+    }
+  }
 }
 ```
 
@@ -46,7 +54,8 @@ Takes no parameters.
 
 ## <code>e2e_<wbr>down</code>
 
-Stop the task's environment and its test runs. An environment unused for 60 minutes is stopped on its own.
+Stop the task's environment and its test runs, cancelling a raise or test run still at work. An environment
+unused for 60 minutes is stopped on its own.
 
 *may overwrite or delete · repeat-safe · stays on this machine.*
 
@@ -177,13 +186,14 @@ at most 65536.
 Run the project's end-to-end tests against the running app: dotnet test of the test project the manifest names,
 in the environment's network, with the settings that point it at the app. The run gets up to 900 seconds,
 restore and build included. The outcome is one of passed, failed, buildFailed, noTests or timedOut; the answer counts the tests, names up to 20 that
-failed, and carries the end of the output, up to 16384 bytes.
+failed, and carries the end of the output, up to 16384 bytes. It runs as a job: the answer comes within the wait with the result, or with the job's resource, whose text holds the result once it ends. One environment does one raise or test run at a time; the next waits its turn, and e2e_down cancels them.
 
 *only adds · every call adds · stays on this machine.*
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `filter` | `string?` | — | `null` | A dotnet test filter, such as FullyQualifiedName~Orders; empty runs every test. |
+| `wait` | `integer` | — | `60` | Seconds to wait for the result before answering with the job in flight, 0 to 900; 0 answers at once. |
 
 <details><summary>JSON Schema</summary>
 
@@ -198,6 +208,11 @@ failed, and carries the end of the output, up to 16384 bytes.
         "null"
       ],
       "default": null
+    },
+    "wait": {
+      "description": "Seconds to wait for the result before answering with the job in flight, 0 to 900; 0 answers at once.",
+      "type": "integer",
+      "default": 60
     }
   }
 }

@@ -19,6 +19,7 @@ public static class EnvironmentRegistrationExtensions
             services.AddSingleton<SessionCopy>();
             services.AddSingleton<SessionGrant>();
             services.AddSingleton<EnvironmentUse>();
+            services.AddSingleton<EnvironmentLeases>();
             services.AddSingleton<IManifests, FileManifests>();
             services.AddSingleton<IEnvironmentJobs, NomadEnvironmentJobs>();
             services.AddSingleton<IAppCalls, HttpAppCalls>();

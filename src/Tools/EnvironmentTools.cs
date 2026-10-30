@@ -7,13 +7,15 @@ namespace Snail.MCP.E2E.Tools;
 
 /// <summary>The task's environment: raise, look, call, read, test and stop.</summary>
 [McpServerToolType]
-public sealed class EnvironmentTools(TaskEnvironments environments)
+public sealed class EnvironmentTools(TaskEnvironments environments, EnvironmentWork work)
 {
-    /// <summary>Raises the environment and waits for the app.</summary>
-    [McpServerTool(Name = "e2e_up", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
+    /// <summary>Raises the environment as a job and waits for the app within the wait.</summary>
+    [McpServerTool(Name = "e2e_up", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description(ToolDescriptions.Up)]
-    public async Task<CallToolResult> UpAsync(CancellationToken cancellationToken = default) =>
-        ToolResponse.From(await environments.UpAsync(cancellationToken));
+    public Task<CallToolResult> UpAsync(
+        [Description(ToolDescriptions.Wait)] int wait = 60,
+        CancellationToken cancellationToken = default) =>
+        work.RaiseAsync(wait, cancellationToken);
 
     /// <summary>Says where the environment stands.</summary>
     [McpServerTool(Name = "e2e_status", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -48,11 +50,12 @@ public sealed class EnvironmentTools(TaskEnvironments environments)
         CancellationToken cancellationToken = default) =>
         ToolResponse.From(await environments.LogsAsync(part, bytes, cancellationToken));
 
-    /// <summary>Runs the end-to-end tests.</summary>
+    /// <summary>Runs the end-to-end tests as a job and answers within the wait.</summary>
     [McpServerTool(Name = "e2e_test", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description(ToolDescriptions.Test)]
-    public async Task<CallToolResult> TestAsync(
+    public Task<CallToolResult> TestAsync(
         [Description(ToolDescriptions.TestFilter)] string? filter = null,
+        [Description(ToolDescriptions.Wait)] int wait = 60,
         CancellationToken cancellationToken = default) =>
-        ToolResponse.From(await environments.TestAsync(filter, cancellationToken));
+        work.TestAsync(filter, wait, cancellationToken);
 }

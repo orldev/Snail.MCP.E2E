@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using ModelContextProtocol.Protocol;
 using Snail.MCP.E2E.Application;
+using Snail.Sdk.Mcp.Hosting.Jobs;
 
 namespace Snail.MCP.E2E.Tools;
 
@@ -17,8 +18,59 @@ public static class ToolResponse
     };
 
     /// <summary>The answer as a tool result.</summary>
-    public static CallToolResult From(Answer<EnvironmentStatus> answer) =>
-        answer.Value is { } status ? Success(Data(status)) : Failure(answer);
+    public static CallToolResult From(Answer<EnvironmentStatus> answer) => From(Envelope(answer));
+
+    /// <summary>The answer as the JSON a tool result carries: the ok flag, and the data or the error and hint.</summary>
+    public static JsonObject Envelope(Answer<EnvironmentStatus> answer) =>
+        answer.Value is { } status ? Ok(Data(status)) : NotOk(answer);
+
+    /// <summary>The answer as the JSON a tool result carries: the ok flag, and the data or the error and hint.</summary>
+    public static JsonObject Envelope(Answer<TestReport> answer) =>
+        answer.Value is { } report ? Ok(Data(report)) : NotOk(answer);
+
+    /// <summary>A failure as the JSON a tool result carries; a success of this type carries nothing worth a job.</summary>
+    public static JsonObject Envelope(Answer<bool> answer) => NotOk(answer);
+
+    /// <summary>The JSON a tool result carries, as the result itself.</summary>
+    public static CallToolResult From(JsonObject envelope) =>
+        envelope["ok"]?.GetValue<bool>() == true
+            ? Success(envelope["data"]?.AsObject() ?? [])
+            : Failure(envelope["error"]?.GetValue<string>() ?? "The call did not happen.", envelope["hint"]?.GetValue<string>());
+
+    /// <summary>
+    /// A job as a tool result: the text is what the model reads — the tool's own answer once the job ended, or the job in
+    /// flight with the resource it is read at — and the structured content is the job's report, which a client of
+    /// <c>Snail.Sdk.Mcp.JobClient</c> awaits.
+    /// </summary>
+    public static CallToolResult From(JobReport report)
+    {
+        var job = JsonNode.Parse(report.ToJson())!.AsObject();
+        var said = Said(report, job);
+
+        return new CallToolResult
+        {
+            IsError = said.IsError,
+            Content = said.Content,
+            StructuredContent = JsonSerializer.SerializeToElement(job, Options)
+        };
+    }
+
+    private static CallToolResult Said(JobReport report, JsonObject job)
+    {
+        if (report.State == JobState.Succeeded && report.Result is { } result && JsonObject.Create(result) is { } envelope)
+            return From(envelope);
+
+        if (report.State == JobState.Running)
+        {
+            job["note"] = Messages.JobRunning(report.Uri);
+
+            return Success(job);
+        }
+
+        return report.State == JobState.Cancelled
+            ? Failure(Messages.JobCancelled, Messages.NotRaisedHint)
+            : Failure(report.Message ?? "The job ended without a result.", null);
+    }
 
     /// <summary>The answer as a tool result.</summary>
     public static CallToolResult From(Answer<bool> answer) =>
@@ -44,8 +96,7 @@ public static class ToolResponse
             : Failure(answer);
 
     /// <summary>The answer as a tool result.</summary>
-    public static CallToolResult From(Answer<TestReport> answer) =>
-        answer.Value is { } report ? Success(Data(report)) : Failure(answer);
+    public static CallToolResult From(Answer<TestReport> answer) => From(Envelope(answer));
 
     /// <summary>A result carrying the data.</summary>
     public static CallToolResult Success(JsonObject data) => new()
@@ -63,6 +114,10 @@ public static class ToolResponse
     };
 
     private static CallToolResult Failure<T>(Answer<T> answer) => Failure(answer.Error ?? "The call did not happen.", answer.Hint);
+
+    private static JsonObject Ok(JsonObject data) => new() { ["ok"] = true, ["data"] = data };
+
+    private static JsonObject NotOk<T>(Answer<T> answer) => new() { ["ok"] = false, ["error"] = answer.Error ?? "The call did not happen.", ["hint"] = answer.Hint };
 
     private static JsonObject Data(EnvironmentStatus status) => new()
     {

@@ -3,6 +3,8 @@ using System.Net;
 using System.Net.Sockets;
 using ModelContextProtocol.Client;
 using Snail.Sdk.Mcp.Hosting;
+using Snail.Sdk.Mcp.Hosting.Jobs;
+using Snail.Sdk.Mcp.JobClient;
 
 namespace Snail.MCP.E2E.Tests.Tools;
 
@@ -18,6 +20,7 @@ public sealed class ProcessContractTests : IAsyncLifetime
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
 
     private readonly Uri _address = new($"http://127.0.0.1:{FreePort()}");
+    private readonly string _workspaces = TestFolder.Create();
     private Process _server = default!;
 
     public async Task InitializeAsync()
@@ -32,6 +35,7 @@ public sealed class ProcessContractTests : IAsyncLifetime
 
         start.Environment["ASPNETCORE_URLS"] = _address.ToString();
         start.Environment["SNAIL_MCP_E2E_NOMAD_ADDRESS"] = $"http://127.0.0.1:{FreePort()}";
+        start.Environment["SNAIL_MCP_E2E_WORKSPACES_ROOT"] = _workspaces;
         start.Environment[ServerSettings.FileVariableOf("e2e")] = ServerProgram.NoSettingsFile;
 
         _server = Process.Start(start)!;
@@ -65,6 +69,7 @@ public sealed class ProcessContractTests : IAsyncLifetime
         _server.Kill(entireProcessTree: true);
         _server.WaitForExit();
         _server.Dispose();
+        Directory.Delete(_workspaces, recursive: true);
 
         return Task.CompletedTask;
     }
@@ -114,6 +119,23 @@ public sealed class ProcessContractTests : IAsyncLifetime
 
         Assert.True(result.IsError);
         Assert.Contains("?root=", result.Text(), StringComparison.Ordinal);
+    }
+
+    /// <summary>A raise is a job: a client of Snail.Sdk.Mcp.JobClient awaits it to its end, here Nomad's absence said in words.</summary>
+    [Fact]
+    public async Task CallJob_UpWithoutNomad_EndsWithTheAddressThatDidNotAnswer()
+    {
+        using var cancellation = new CancellationTokenSource(Timeout);
+        string copy = Path.Combine(_workspaces, "0c2b9e1f", "step-1");
+        Directory.CreateDirectory(Path.Combine(copy, ".snail"));
+        await File.WriteAllTextAsync(Path.Combine(copy, ".snail", "environment.json"), """{ "app": { "project": "src/Api/Api.csproj" } }""", cancellation.Token);
+        await using var session = await SessionAsync($"root={Uri.EscapeDataString(copy)}", cancellation.Token);
+
+        var report = await session.CallJobAsync("e2e_up", cancellationToken: cancellation.Token);
+
+        Assert.Equal(JobState.Succeeded, report.State);
+        Assert.StartsWith("job://e2e/up/", report.Uri, StringComparison.Ordinal);
+        Assert.Contains("did not answer", report.Result!.Value.GetRawText(), StringComparison.Ordinal);
     }
 
     [Fact]

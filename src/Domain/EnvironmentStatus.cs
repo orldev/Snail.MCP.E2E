@@ -9,7 +9,7 @@ public enum EnvironmentState
     /// <summary>The environment runs, but the app does not answer yet: it restores, builds or starts.</summary>
     Starting,
 
-    /// <summary>The app stopped and will not start again on its own: its build or its start failed.</summary>
+    /// <summary>A part stopped and will not start again on its own: the app's build or start, a service, or the copy of the project failed.</summary>
     Failed,
 
     /// <summary>No environment runs for the task.</summary>

@@ -18,6 +18,9 @@ public interface IEnvironmentJobs
     /// <summary>Runs the tests in the environment's network until they end or the time is up.</summary>
     Task<TestRun> TestAsync(TestPlan plan, TimeSpan timeout, CancellationToken cancellationToken);
 
+    /// <summary>Stops every test run still going and answers how many there were: after a restart no call waits for any of them.</summary>
+    Task<int> StopTestRunsAsync(CancellationToken cancellationToken);
+
     /// <summary>Every environment this server raised that still runs.</summary>
     Task<IReadOnlyList<TaskEnvironment>> ListAsync(CancellationToken cancellationToken);
 

@@ -21,8 +21,8 @@ public static class Messages
     /// <summary>The app did not answer a request.</summary>
     public const string Unreachable = "The app did not answer.";
 
-    /// <summary>The app stopped and will not start again.</summary>
-    public const string StartFailed = "The app stopped and will not start again: its build or its start failed. The output below ends with the reason.";
+    /// <summary>A part of the environment stopped and will not start again.</summary>
+    public const string StartFailed = "A part of the environment stopped and will not start again: the app's build or start, a service, or the copy of the project failed. The parts say which, and the output ends with the reason.";
 
     /// <summary>The app did not answer its health check in time.</summary>
     public const string StartSlow = "The app did not answer its health check in time. It may still be restoring or building: call e2e_status, or read e2e_logs.";
@@ -83,4 +83,23 @@ public static class Messages
 
     /// <summary>Where Nomad comes from.</summary>
     public const string SchedulerDownHint = "TaskEnvironments run through Nomad: start the stand with SWARM_NOMAD=1, or point SNAIL_MCP_E2E_NOMAD_ADDRESS at it.";
+
+    /// <summary>A raise or a test run waits for the one before it in the environment's line.</summary>
+    public const string WaitingInLine = "waiting for the environment's previous raise or test run to end";
+
+    /// <summary>A raise at work.</summary>
+    public const string Raising = "raising the environment and waiting for the app's health check";
+
+    /// <summary>A test run at work.</summary>
+    public const string Testing = "running the end-to-end tests";
+
+    /// <summary>A raise or a test run that e2e_down stopped.</summary>
+    public const string StoppedByDown = "The environment was stopped with e2e_down before this ended.";
+
+    /// <summary>A job the server cancelled, as it does when it stops.</summary>
+    public const string JobCancelled = "The work was cancelled: the server stopped before it ended.";
+
+    /// <summary>Where the result of a job still running will be.</summary>
+    public static string JobRunning(string job) =>
+        $"Still running. Its result will be in the resource {job}: read it when you need the result. Calling the same tool again while it runs waits on this job rather than starting another.";
 }

@@ -37,21 +37,29 @@ default to 8080 and `/health`; comments and trailing commas are allowed. Snail.S
 ## How an environment runs
 
 - The session's address names the working copy, `/mcp?root=/workspaces/<task>/step-N`; the task is the copy's first
-  folder, so every step of a task reaches the same environment, and `e2e_up` replaces it with the current files.
+  folder, so every step of a task reaches the same environment, and `e2e_up` replaces it with the current files. A
+  task's id is a DNS label of at most 37 characters; a part's host is `e2e-<task>--<part>`.
 - The environment is the Nomad job `e2e-<task>`: one task per service from its image, and the app built and run with
-  the .NET SDK image from a fresh copy of the working copy, which is mounted read-only.
+  the .NET SDK image. Before them the server's own task `s3l_prepare` copies the task's working copy and packages into
+  the allocation; the app sees neither the other tasks' copies nor the shared package volume. After them `s3l_keep`
+  writes the task's packages back to its own folder of that volume, so the next raise restores from disk.
 - Everything sits on one internal Docker network. The way out is the server's proxy, which lets through NuGet's hosts
-  only; packages are kept in a shared volume.
-- The tests run as the batch job `e2e-<task>--tests` in the same network, with `APP_URL` pointing at the app.
-- An environment nobody called for 60 minutes is stopped.
+  only, with limits of its own: 256 connections, 10 s for a request head, 2 minutes of silence.
+- `e2e_up` and `e2e_test` run as jobs: the call answers within its `wait` (60 s unless asked otherwise) with the result,
+  or with the job's `job://e2e/…` resource, whose text holds the result once it ends. One environment does one thing
+  at a time: the same call while it runs waits on the same job, another waits its turn, `e2e_down` cancels them.
+- The tests run as the batch job `e2e-<task>--tests` in the same network, with `APP_URL` pointing at the app. A run
+  ends on its own time limit, and one a restart left going is stopped at the next start.
+- An environment nobody called for 60 minutes is stopped, unless a raise or test run is at work on it.
 
 ## Running it
 
 ```bash
-docker build --build-context feed=../../nuget -t snail/s3l-e2e-mcp:latest .
+docker build --build-context feed=../../nuget -t s3l-e2e-mcp:local .
 ```
 
-Snail.Sdk is not on nuget.org yet, so the build takes the local feed as the build context `feed`. In Snail.Swarm.Agent
+The Snail.Sdk version `global.json` asks for is in the local feed until it is released, so the build takes that feed
+as the build context `feed`. In Snail.Swarm.Agent
 the server stands beside the MCP kit: `SWARM_ENVIRONMENTS=1 sh deploy/stand.sh up` (`deploy/compose.environments.yml`).
 
 | Setting | Default | |

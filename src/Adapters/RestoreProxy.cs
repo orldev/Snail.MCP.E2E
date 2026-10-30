@@ -8,19 +8,43 @@ namespace Snail.MCP.E2E.Adapters;
 
 /// <summary>The one door out of an environment's network: an HTTP proxy that lets through only the package hosts it names.</summary>
 /// <remarks>
+/// <para>
 /// An environment's network is internal, so a restore has no way out but this proxy, and the proxy opens only NuGet's
 /// hosts on ports 80 and 443. The app itself gets the same proxy in its environment: whatever it tries to reach outside
 /// is refused here, which is the point — an app under test talks to its own services, not to the world.
+/// </para>
+/// <para>
+/// The apps it serves run code nobody reviewed, so it holds its own limits: a connection is refused once
+/// <see cref="MaxConnections"/> are open, a request head must arrive within <see cref="HeadTimeout"/>, a host must answer
+/// within <see cref="ConnectTimeout"/>, and a tunnel quiet both ways for <see cref="IdleTimeout"/> is closed. Without them a
+/// client that opened connections and sent nothing held the server's sockets for ever. The head is read in blocks, and
+/// what came after it — the body of a request — goes on to the host.
+/// </para>
 /// </remarks>
 public sealed class RestoreProxy(IOptions<E2EOptions> options, ILogger<RestoreProxy> logger) : BackgroundService
 {
     /// <summary>The longest request head read before the request is refused.</summary>
     internal const int MaxHeadBytes = 16 * 1024;
 
+    private const int CopyBytes = 81920;
+
     private TcpListener? _listener;
+    private SemaphoreSlim? _slots;
 
     /// <summary>The port the proxy listens on, once it does; zero before it starts or when it is off.</summary>
     public int Port { get; private set; }
+
+    /// <summary>Most connections open at once; one more is answered 503 and closed.</summary>
+    internal int MaxConnections { get; init; } = 256;
+
+    /// <summary>How long a client has to send its request head.</summary>
+    internal TimeSpan HeadTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>How long a package host has to accept the connection.</summary>
+    internal TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>How long a connection may pass nothing either way before it is closed.</summary>
+    internal TimeSpan IdleTimeout { get; init; } = TimeSpan.FromMinutes(2);
 
     /// <summary>Whether a request for this host and port may go through.</summary>
     public static bool Allows(IReadOnlyCollection<string> hosts, string host, int port) =>
@@ -32,6 +56,7 @@ public sealed class RestoreProxy(IOptions<E2EOptions> options, ILogger<RestorePr
         if (options.Value.RestoreProxyPort <= 0)
             return;
 
+        _slots = new SemaphoreSlim(MaxConnections, MaxConnections);
         _listener = new TcpListener(IPAddress.Any, options.Value.RestoreProxyPort);
         _listener.Start();
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
@@ -42,7 +67,10 @@ public sealed class RestoreProxy(IOptions<E2EOptions> options, ILogger<RestorePr
             while (!stoppingToken.IsCancellationRequested)
             {
                 TcpClient client = await _listener.AcceptTcpClientAsync(stoppingToken);
-                _ = ServeAsync(client, stoppingToken);
+
+                bool hasSlot = await _slots.WaitAsync(0, stoppingToken);
+
+                _ = hasSlot ? ServeAsync(client, _slots, stoppingToken) : RefuseBusyAsync(client, stoppingToken);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -58,10 +86,23 @@ public sealed class RestoreProxy(IOptions<E2EOptions> options, ILogger<RestorePr
     public override void Dispose()
     {
         _listener?.Dispose();
+        _slots?.Dispose();
         base.Dispose();
     }
 
-    private async Task ServeAsync(TcpClient client, CancellationToken cancellationToken)
+    /// <summary>The head of a request and whatever arrived after it, or null while the head has not ended.</summary>
+    internal static Head? Split(ReadOnlySpan<byte> read)
+    {
+        int end = read.IndexOf("\r\n\r\n"u8);
+        if (end < 0)
+            return null;
+
+        int headEnd = end + 4;
+
+        return new Head(read[..headEnd].ToArray(), read[headEnd..].ToArray());
+    }
+
+    private async Task ServeAsync(TcpClient client, SemaphoreSlim slots, CancellationToken cancellationToken)
     {
         using (client)
         {
@@ -71,7 +112,7 @@ public sealed class RestoreProxy(IOptions<E2EOptions> options, ILogger<RestorePr
                 if (await HeadAsync(stream, cancellationToken) is not { } head)
                     return;
 
-                if (Request.Of(head) is not { } request)
+                if (Request.Of(head.Bytes) is not { } request)
                 {
                     await RefuseAsync(stream, "400 Bad Request", cancellationToken);
                     return;
@@ -90,45 +131,129 @@ public sealed class RestoreProxy(IOptions<E2EOptions> options, ILogger<RestorePr
             {
                 Log.ProxyConnectionEnded(logger, exception);
             }
+            finally
+            {
+                slots.Release();
+            }
         }
     }
 
-    private static async Task ForwardAsync(NetworkStream stream, Request request, byte[] head, CancellationToken cancellationToken)
+    private static async Task RefuseBusyAsync(TcpClient client, CancellationToken cancellationToken)
     {
-        using var upstream = new TcpClient();
-        await upstream.ConnectAsync(request.Host, request.Port, cancellationToken);
-        NetworkStream far = upstream.GetStream();
-
-        if (request.IsTunnel)
-            await stream.WriteAsync("HTTP/1.1 200 Connection established\r\n\r\n"u8.ToArray(), cancellationToken);
-        else
-            await far.WriteAsync(request.Forwarded(head), cancellationToken);
-
-        Task outbound = stream.CopyToAsync(far, cancellationToken);
-        Task inbound = far.CopyToAsync(stream, cancellationToken);
-        await Task.WhenAny(outbound, inbound);
+        using (client)
+        {
+            try
+            {
+                await RefuseAsync(client.GetStream(), "503 Service Unavailable", cancellationToken);
+            }
+            catch (Exception exception) when (exception is IOException or SocketException or OperationCanceledException)
+            {
+            }
+        }
     }
 
-    private static async Task<byte[]?> HeadAsync(NetworkStream stream, CancellationToken cancellationToken)
+    private async Task<Head?> HeadAsync(NetworkStream stream, CancellationToken cancellationToken)
     {
-        List<byte> read = [];
-        var one = new byte[1];
+        using var reading = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        reading.CancelAfter(HeadTimeout);
 
-        while (read.Count < MaxHeadBytes)
+        var buffer = new byte[MaxHeadBytes];
+        int filled = 0;
+
+        while (filled < buffer.Length)
         {
-            if (await stream.ReadAsync(one, cancellationToken) == 0)
+            int got = await stream.ReadAsync(buffer.AsMemory(filled), reading.Token);
+            if (got == 0)
                 return null;
 
-            read.Add(one[0]);
-            if (read.Count >= 4 && read[^4] == '\r' && read[^3] == '\n' && read[^2] == '\r' && read[^1] == '\n')
-                return [.. read];
+            filled += got;
+            if (Split(buffer.AsSpan(0, filled)) is { } head)
+                return head;
         }
 
         return null;
     }
 
+    private async Task ForwardAsync(NetworkStream stream, Request request, Head head, CancellationToken cancellationToken)
+    {
+        using var upstream = new TcpClient();
+        using (var connecting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            connecting.CancelAfter(ConnectTimeout);
+            await upstream.ConnectAsync(request.Host, request.Port, connecting.Token);
+        }
+
+        NetworkStream far = upstream.GetStream();
+
+        if (request.IsTunnel)
+            await stream.WriteAsync("HTTP/1.1 200 Connection established\r\n\r\n"u8.ToArray(), cancellationToken);
+        else
+            await far.WriteAsync(request.Forwarded(head.Bytes), cancellationToken);
+
+        if (head.Rest.Length > 0)
+            await far.WriteAsync(head.Rest, cancellationToken);
+
+        await PumpAsync(stream, far, cancellationToken);
+    }
+
+    /// <summary>Copies both ways until either side ends or nothing passes for the idle span.</summary>
+    private async Task PumpAsync(NetworkStream near, NetworkStream far, CancellationToken cancellationToken)
+    {
+        using var open = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var traffic = new Traffic();
+
+        Task outbound = CopyAsync(near, far, traffic, open.Token);
+        Task inbound = CopyAsync(far, near, traffic, open.Token);
+        Task quiet = QuietAsync(traffic, open.Token);
+
+        await Task.WhenAny(outbound, inbound, quiet);
+        await open.CancelAsync();
+
+        try
+        {
+            await Task.WhenAll(outbound, inbound, quiet);
+        }
+        catch (Exception exception) when (exception is IOException or SocketException or OperationCanceledException)
+        {
+        }
+    }
+
+    private static async Task CopyAsync(NetworkStream from, NetworkStream to, Traffic traffic, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[CopyBytes];
+        int got;
+
+        while ((got = await from.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            await to.WriteAsync(buffer.AsMemory(0, got), cancellationToken);
+            traffic.Passed();
+        }
+    }
+
+    /// <summary>Ends once nothing has passed for the idle span.</summary>
+    private async Task QuietAsync(Traffic traffic, CancellationToken cancellationToken)
+    {
+        var look = TimeSpan.FromTicks(Math.Max(IdleTimeout.Ticks / 4, TimeSpan.TicksPerMillisecond));
+
+        while (traffic.QuietFor < IdleTimeout)
+            await Task.Delay(look, cancellationToken);
+    }
+
     private static Task RefuseAsync(NetworkStream stream, string status, CancellationToken cancellationToken) =>
         stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"), cancellationToken).AsTask();
+
+    /// <summary>A request's head as read, and the bytes that came after it in the same reads.</summary>
+    internal sealed record Head(byte[] Bytes, byte[] Rest);
+
+    /// <summary>When anything last passed through a connection, either way.</summary>
+    private sealed class Traffic
+    {
+        private long _last = Environment.TickCount64;
+
+        public TimeSpan QuietFor => TimeSpan.FromMilliseconds(Environment.TickCount64 - Interlocked.Read(ref _last));
+
+        public void Passed() => Interlocked.Exchange(ref _last, Environment.TickCount64);
+    }
 
     /// <summary>One request as the proxy reads it: where it goes, and whether it is a tunnel.</summary>
     internal sealed record Request(string Host, int Port, bool IsTunnel, string Target)

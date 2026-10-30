@@ -59,6 +59,12 @@ public sealed partial class ToolCatalogTests
     }
 
     [Fact]
+    public void Wait_LongestItNames_IsTheLongestAJobIsWaitedFor()
+    {
+        Assert.Contains($"0 to {EnvironmentWork.MaxWaitSeconds}", ToolDescriptions.Wait, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Test_FailuresItNames_AreAsManyAsTheReportKeeps()
     {
         Assert.Contains($"up to {TestSummary.MaxFailures} that", ToolDescriptions.Test.ReplaceLineEndings(" "), StringComparison.Ordinal);

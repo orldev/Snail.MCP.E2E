@@ -1,5 +1,6 @@
 using Snail.MCP.E2E.Configuration;
 using Snail.MCP.E2E.Tools;
+using Snail.Sdk.Mcp.Hosting.Jobs;
 
 namespace Snail.MCP.E2E.Extensions;
 
@@ -18,6 +19,7 @@ public static class EnvironmentServerExtensions
                 .ValidateOnStart();
 
             builder.Services.AddEnvironments();
+            builder.Services.AddSingleton<EnvironmentWork>();
 
             builder.Services
                 .AddMcpServer(options =>
@@ -28,7 +30,8 @@ public static class EnvironmentServerExtensions
                 .RefuseWhatWasNotGranted()
                 .WithHttpTransport()
                 .WithTools<EnvironmentTools>()
-                .WithTools<DiagnosticsTools>();
+                .WithTools<DiagnosticsTools>()
+                .WithJobs("e2e");
 
             return builder;
         }

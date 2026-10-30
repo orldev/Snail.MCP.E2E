@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Snail.MCP.E2E.Adapters;
 using Snail.MCP.E2E.Application.Ports;
 using Snail.MCP.E2E.Configuration;
+using Snail.MCP.E2E.Tests.Application;
 using Snail.Toolkit.Nomad.Models;
 
 namespace Snail.MCP.E2E.Tests.Adapters;
@@ -11,6 +12,8 @@ public sealed class NomadEnvironmentJobsTests
 {
     private const string Job = "e2e-0c2b9e1f";
 
+    private const string Tests = "e2e-0c2b9e1f--tests";
+
     private const string Allocations = """[{"ID":"a2","Name":"x","JobID":"e2e-0c2b9e1f","TaskGroup":"environment","NodeID":"n","ClientStatus":"running","DesiredStatus":"run","CreateTime":2,"TaskStates":{"mongo":{"State":"running"},"app":{"State":"running","Restarts":1}}},{"ID":"a1","Name":"x","JobID":"e2e-0c2b9e1f","TaskGroup":"environment","NodeID":"n","ClientStatus":"complete","DesiredStatus":"stop","CreateTime":1}]""";
 
     private readonly FakeNomad _nomad = new();
@@ -18,6 +21,8 @@ public sealed class NomadEnvironmentJobsTests
     private static TaskEnvironment Environment => TaskEnvironment.Of("0c2b9e1f")!.Value;
 
     private NomadEnvironmentJobs Jobs() => new(_nomad.Client(), Options.Create(new E2EOptions()), TimeProvider.System);
+
+    private FakeNomad Registering() => _nomad.Json("POST", "/v1/jobs", """{"EvalID":"e1"}""");
 
     private static Allocation Of(string id, string desired, long created) =>
         new(id, "e2e-shop.app[0]", "e2e-shop", "app", "node", DesiredStatus: desired, CreateTime: created);
@@ -131,6 +136,52 @@ public sealed class NomadEnvironmentJobsTests
 
         Assert.Equal(["e2e-aa"], environments.Select(environment => environment.Value));
     }
+
+    /// <summary>A run cancelled while it went on was left on the node with nobody waiting for it.</summary>
+    [Fact]
+    public async Task TestAsync_CallerGoneWhileTheRunGoesOn_StopsTheRunAndKeepsItsLogs()
+    {
+        Registering();
+        using var gone = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Jobs().TestAsync(Plan(), TimeSpan.FromMinutes(15), gone.Token));
+
+        Assert.Equal(("DELETE", $"/v1/job/{Tests}"), (_nomad.Sent[^1].Method, _nomad.Sent[^1].Path));
+    }
+
+    [Fact]
+    public async Task TestAsync_OutOfTime_StopsTheRunAndSaysSo()
+    {
+        Registering();
+
+        var run = await Jobs().TestAsync(Plan(), TimeSpan.Zero, CancellationToken.None);
+
+        Assert.True(run.HasTimedOut);
+        Assert.Contains(_nomad.Sent, request => request is { Method: "DELETE" } && request.Path == $"/v1/job/{Tests}");
+    }
+
+    [Fact]
+    public async Task StopTestRunsAsync_RunsAnEarlierStartLeft_StopsTheRunningOnesOnly()
+    {
+        _nomad.Json("GET", "/v1/jobs", """[{"ID":"e2e-aa","Name":"e2e-aa","Namespace":"default","Type":"service","Status":"running"},{"ID":"e2e-aa--tests","Name":"e2e-aa--tests","Namespace":"default","Type":"batch","Status":"running"},{"ID":"e2e-bb--tests","Name":"e2e-bb--tests","Namespace":"default","Type":"batch","Status":"dead"}]""");
+
+        int stopped = await Jobs().StopTestRunsAsync(CancellationToken.None);
+
+        Assert.Equal(1, stopped);
+        Assert.Equal(["/v1/job/e2e-aa--tests"], _nomad.Sent.Where(request => request.Method == "DELETE").Select(request => request.Path));
+    }
+
+    /// <summary>Joined the other way, a run that wrote to standard error had its summary pushed out of the end the answer keeps.</summary>
+    [Fact]
+    public void Joined_BothStreams_EndsWithTheStandardOneAndItsSummary()
+    {
+        string output = NomadEnvironmentJobs.Joined("warning: obsolete\n", "Passed!  - Failed: 0, Passed: 3, Skipped: 0, Total: 3");
+
+        Assert.EndsWith("Total: 3", output, StringComparison.Ordinal);
+        Assert.StartsWith("warning: obsolete", output, StringComparison.Ordinal);
+    }
+
+    private static TestPlan Plan() => new(Environment, Stage.Copy, Stage.Shop, Stage.Shop.Tests!, null);
 
     private static HttpResponseMessage Dropped() =>
         new(HttpStatusCode.OK) { Content = new StreamContent(new DroppedStream()) };

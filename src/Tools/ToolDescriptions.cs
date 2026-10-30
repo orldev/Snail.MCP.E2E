@@ -20,9 +20,9 @@ public static class ToolDescriptions
         The project describes it in .snail/environment.json: the app's project, port and health path, the services it
         needs (a database, a broker) by image, and its end-to-end tests. The app is built and run with .NET in a network
         of its own, beside its services; only NuGet is reachable from it. The first raise restores packages and builds,
-        which takes minutes; the wait is up to 300 seconds. Raise again after changing the code: the environment is
-        replaced by one running the current files. The state is one of {States}; when it is failed, the answer carries
-        the end of the app's output with the reason.
+        which takes minutes; the app is given up to 300 seconds to answer. Raise again after changing the code: the
+        environment is replaced by one running the current files. The state is one of {States}; when it is failed, the
+        answer carries the end of the app's output with the reason. {Job}
         """;
 
     /// <summary>The contract of e2e_status.</summary>
@@ -34,7 +34,8 @@ public static class ToolDescriptions
     /// <summary>The contract of e2e_down.</summary>
     public const string Down =
         """
-        Stop the task's environment and its test runs. An environment unused for 60 minutes is stopped on its own.
+        Stop the task's environment and its test runs, cancelling a raise or test run still at work. An environment
+        unused for 60 minutes is stopped on its own.
         """;
 
     /// <summary>The contract of e2e_http.</summary>
@@ -79,8 +80,15 @@ public static class ToolDescriptions
         Run the project's end-to-end tests against the running app: dotnet test of the test project the manifest names,
         in the environment's network, with the settings that point it at the app. The run gets up to 900 seconds,
         restore and build included. The outcome is one of {Outcomes}; the answer counts the tests, names up to 20 that
-        failed, and carries the end of the output, up to 16384 bytes.
+        failed, and carries the end of the output, up to 16384 bytes. {Job}
         """;
+
+    /// <summary>How a raise and a test run answer: within the wait, or with the job they go on as.</summary>
+    public const string Job =
+        "It runs as a job: the answer comes within the wait with the result, or with the job's resource, whose text holds the result once it ends. One environment does one raise or test run at a time; the next waits its turn, and e2e_down cancels them.";
+
+    /// <summary>The wait parameter of e2e_up and e2e_test.</summary>
+    public const string Wait = "Seconds to wait for the result before answering with the job in flight, 0 to 900; 0 answers at once.";
 
     /// <summary>The filter parameter of e2e_test.</summary>
     public const string TestFilter = "A dotnet test filter, such as FullyQualifiedName~Orders; empty runs every test.";

@@ -66,4 +66,10 @@ public static class Parts
 
     /// <summary>The test run's job and task.</summary>
     public const string Tests = "tests";
+
+    /// <summary>The server's task before the others: the task's copy and packages into the allocation; no service name can hold an underscore.</summary>
+    public const string Prepare = "s3l_prepare";
+
+    /// <summary>The server's task after the others: the task's packages back to the package volume.</summary>
+    public const string Keep = "s3l_keep";
 }

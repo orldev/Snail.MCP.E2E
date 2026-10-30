@@ -6,19 +6,28 @@ namespace Snail.MCP.E2E.Adapters;
 /// <summary>An environment and a test run as Nomad jobs: one group, the services and the app side by side in the environment's network.</summary>
 /// <remarks>
 /// <para>
-/// The app is built where it runs, from a fresh copy of the working copy inside its own container: the copy is mounted
-/// read-only from the same volume the workers write, and a build must not leave its bin and obj in the task's files.
-/// The copy's own bin and obj are dropped first: they carry paths of another machine, which a restore here trips over.
+/// The app and the tests run the project's own code, so they see nothing of other tasks. A first task of the group,
+/// <see cref="Parts.Prepare"/>, is this server's script: it alone mounts the workspaces, and copies the task's copy into
+/// the allocation's own folder, without its bin and obj — they carry paths of another machine, which a restore here trips
+/// over. The app builds from there. Mounting every workspace into the app once let one task's app read every other
+/// task's files.
 /// </para>
 /// <para>
-/// The copy is mounted with host-to-task propagation: on a stand where the workspaces are a named Docker volume, the host
+/// The workspaces are mounted with host-to-task propagation: on a stand where they are a named Docker volume, the host
 /// volume lies inside Docker's own data root, and Docker refuses a private bind mount from there — the first raise on
 /// the stand failed on exactly that. On a cluster's plain host path the mode changes nothing.
 /// </para>
 /// <para>
+/// Packages are the task's own too. They used to sit in one folder every app wrote to, so one task's build could change
+/// a package another task's build then ran. Now the preparing task puts the task's packages into the allocation, and
+/// <see cref="Parts.Keep"/>, once the app has stopped, writes them back to the task's folder of the package volume — by
+/// copying into a fresh folder and renaming it, so a link the app left there points nowhere it can write. Only these two
+/// scripts mount the package volume; a folder untouched for a week is dropped.
+/// </para>
+/// <para>
 /// Every container sits on one internal network. Packages come through the restore proxy, which lets only NuGet's hosts
-/// through, and are kept in a shared volume so the next raise restores from disk. The app is started with
-/// <c>--no-launch-profile</c>: a launch profile would choose its own address and environment over the ones given here.
+/// through. The app is started with <c>--no-launch-profile</c>: a launch profile would choose its own address and
+/// environment over the ones given here.
 /// </para>
 /// <para>
 /// Nomad interpolates <c>${…}</c> in every string of a task's config and environment, so the shell's own <c>${…}</c> is
@@ -29,17 +38,41 @@ namespace Snail.MCP.E2E.Adapters;
 /// </remarks>
 public static class EnvironmentJob
 {
-    /// <summary>Where the package volume is mounted inside a container that builds.</summary>
+    /// <summary>Where the package volume is mounted inside the preparing and keeping tasks.</summary>
     public const string PackagesFolder = "/nuget";
+
+    /// <summary>Where the task's copy and its packages are inside the allocation every task of the group shares.</summary>
+    public const string AllocationFolder = "/alloc";
 
     /// <summary>Nanoseconds in one second, the unit Nomad's API counts durations in.</summary>
     private const long Second = 1_000_000_000;
 
+    private const string Prepare =
+        """
+        set -e
+        rm -rf /alloc/src /alloc/nuget
+        mkdir -p /alloc/src /alloc/nuget /nuget/tasks
+        cp -a "$S3L_COPY/." /alloc/src/
+        find /alloc/src -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
+        if [ -d "/nuget/tasks/$S3L_TASK" ]; then cp -a "/nuget/tasks/$S3L_TASK/." /alloc/nuget/; fi
+        find /nuget/tasks -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + || true
+        """;
+
+    private const string Keep =
+        """
+        set -e
+        [ -d /alloc/nuget ] || exit 0
+        fresh="/nuget/tasks/.$S3L_TASK.$NOMAD_ALLOC_ID"
+        rm -rf "$fresh" && mkdir -p "$fresh"
+        cp -a /alloc/nuget/. "$fresh/"
+        rm -rf "/nuget/tasks/$S3L_TASK"
+        mv -T "$fresh" "/nuget/tasks/$S3L_TASK" || rm -rf "$fresh"
+        """;
+
     private const string Build =
         """
         set -e
-        rm -rf /tmp/src && mkdir -p /tmp/src && cp -a "$S3L_COPY/." /tmp/src/
-        find /tmp/src -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
+        rm -rf /tmp/src && mkdir -p /tmp/src && cp -a /alloc/src/. /tmp/src/
         cd /tmp/src
         """;
 
@@ -50,7 +83,7 @@ public static class EnvironmentJob
 
     private const string Test = $$"""
         {{Build}}
-        dotnet test "$S3L_PROJECT" --nologo --logger "console;verbosity=normal" $${S3L_FILTER:+--filter "$S3L_FILTER"}
+        timeout -k 10 "$S3L_TIMEOUT" dotnet test "$S3L_PROJECT" --nologo --logger "console;verbosity=normal" $${S3L_FILTER:+--filter "$S3L_FILTER"}
         """;
 
     /// <summary>The environment's job: a service job of one group, which Nomad restarts an app in twice before it gives up.</summary>
@@ -60,7 +93,9 @@ public static class EnvironmentJob
         var services = manifest.Services.Keys.ToList();
         JsonArray tasks = [.. manifest.Services.Select(service => ServiceTask(plan.Name, service.Key, service.Value, manifest.App, services, options))];
 
-        tasks.Add(BuildTask(Parts.App, plan.Name, plan.Copy, Run, AppEnv(plan, options), options));
+        tasks.Add(BuildTask(Parts.App, plan.Name, Run, AppEnv(plan, options), options));
+        tasks.Add(PrepareTask(plan.Name, plan.Copy, options));
+        tasks.Add(KeepTask(plan.Name, options));
 
         var job = new JsonObject
         {
@@ -76,18 +111,24 @@ public static class EnvironmentJob
     }
 
     /// <summary>The test run's job: a batch job that runs once, never restarted, in the environment's network.</summary>
-    /// <remarks>Each run carries a mark of its own: Nomad keeps a batch job that registers unchanged, and the tests would not run again.</remarks>
+    /// <remarks>
+    /// Each run carries a mark of its own: Nomad keeps a batch job that registers unchanged, and the tests would not run
+    /// again. The tests end on their own time limit, the one the server waits for: a run whose server restarted or whose
+    /// stop failed would otherwise hold the node with nobody waiting for it.
+    /// </remarks>
     public static JsonObject TestsOf(TestPlan plan, string run, E2EOptions options)
     {
         var manifest = plan.Manifest;
         var services = manifest.Services.Keys.ToList();
-        var env = Common(plan.Name, plan.Copy, plan.Tests.Project, manifest, options);
+        var env = Common(plan.Name, plan.Tests.Project, manifest, options);
 
         foreach (var setting in Placeholders.Fill(plan.Tests.Env, plan.Name, manifest.App, services))
             env[setting.Key] = setting.Value;
 
         if (plan.Filter is { } filter)
             env["S3L_FILTER"] = filter;
+
+        env["S3L_TIMEOUT"] = $"{options.TestSeconds}s";
 
         var job = new JsonObject
         {
@@ -96,7 +137,7 @@ public static class EnvironmentJob
             ["Type"] = "batch",
             ["Datacenters"] = new JsonArray(options.Datacenter),
             ["Meta"] = new JsonObject { ["s3l.e2e.copy"] = plan.Copy, ["s3l.e2e.run"] = run },
-            ["TaskGroups"] = new JsonArray(Group(Parts.Tests, [BuildTask(Parts.Tests, plan.Name, plan.Copy, Test, env, options)], options, attempts: 0))
+            ["TaskGroups"] = new JsonArray(Group(Parts.Tests, [BuildTask(Parts.Tests, plan.Name, Test, env, options), PrepareTask(plan.Name, plan.Copy, options), KeepTask(plan.Name, options)], options, attempts: 0))
         };
 
         return job;
@@ -137,7 +178,7 @@ public static class EnvironmentJob
         };
     }
 
-    private static JsonObject BuildTask(string task, TaskEnvironment name, string copy, string script, Dictionary<string, string> env, E2EOptions options) => new()
+    private static JsonObject BuildTask(string task, TaskEnvironment name, string script, Dictionary<string, string> env, E2EOptions options) => new()
     {
         ["Name"] = task,
         ["Driver"] = "docker",
@@ -147,24 +188,53 @@ public static class EnvironmentJob
             ["network_mode"] = options.Network,
             ["network_aliases"] = new JsonArray(name.HostOf(task)),
             ["command"] = "sh",
-            ["args"] = new JsonArray("-c", script),
-            ["mounts"] = new JsonArray(new JsonObject { ["type"] = "volume", ["source"] = options.PackagesVolume, ["target"] = PackagesFolder, ["readonly"] = false })
+            ["args"] = new JsonArray("-c", script)
         },
-        ["VolumeMounts"] = new JsonArray(new JsonObject
+        ["Env"] = Env(env),
+        ["Resources"] = new JsonObject { ["CPU"] = options.AppCpu, ["MemoryMB"] = options.AppMemoryMegabytes }
+    };
+
+    /// <summary>The server's own script before every other task: the task's copy and packages into the allocation.</summary>
+    private static JsonObject PrepareTask(TaskEnvironment name, string copy, E2EOptions options)
+    {
+        var task = ScriptTask(Parts.Prepare, "prestart", Prepare, new Dictionary<string, string>(StringComparer.Ordinal) { ["S3L_COPY"] = copy, ["S3L_TASK"] = name.Value }, options);
+
+        task["VolumeMounts"] = new JsonArray(new JsonObject
         {
             ["Volume"] = "workspaces",
             ["Destination"] = options.WorkspacesRoot,
             ["ReadOnly"] = true,
             ["PropagationMode"] = "host-to-task"
-        }),
+        });
+
+        return task;
+    }
+
+    /// <summary>The server's own script after every other task: the task's packages back to its folder of the package volume.</summary>
+    private static JsonObject KeepTask(TaskEnvironment name, E2EOptions options) =>
+        ScriptTask(Parts.Keep, "poststop", Keep, new Dictionary<string, string>(StringComparer.Ordinal) { ["S3L_TASK"] = name.Value }, options);
+
+    private static JsonObject ScriptTask(string task, string hook, string script, Dictionary<string, string> env, E2EOptions options) => new()
+    {
+        ["Name"] = task,
+        ["Driver"] = "docker",
+        ["Lifecycle"] = new JsonObject { ["Hook"] = hook, ["Sidecar"] = false },
+        ["Config"] = new JsonObject
+        {
+            ["image"] = options.SdkImage,
+            ["network_mode"] = "none",
+            ["command"] = "sh",
+            ["args"] = new JsonArray("-c", script),
+            ["mounts"] = new JsonArray(new JsonObject { ["type"] = "volume", ["source"] = options.PackagesVolume, ["target"] = PackagesFolder, ["readonly"] = false })
+        },
         ["Env"] = Env(env),
-        ["Resources"] = new JsonObject { ["CPU"] = options.AppCpu, ["MemoryMB"] = options.AppMemoryMegabytes }
+        ["Resources"] = new JsonObject { ["CPU"] = options.ServiceCpu, ["MemoryMB"] = options.ServiceMemoryMegabytes }
     };
 
     private static Dictionary<string, string> AppEnv(EnvironmentPlan plan, E2EOptions options)
     {
         var manifest = plan.Manifest;
-        var env = Common(plan.Name, plan.Copy, manifest.App.Project, manifest, options);
+        var env = Common(plan.Name, manifest.App.Project, manifest, options);
 
         env["S3L_PORT"] = manifest.App.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
         env["ASPNETCORE_ENVIRONMENT"] = "Development";
@@ -175,14 +245,13 @@ public static class EnvironmentJob
         return env;
     }
 
-    /// <summary>What every container that builds is given: the copy, the project, the packages, and the proxy with the environment's own hosts kept off it.</summary>
-    private static Dictionary<string, string> Common(TaskEnvironment name, string copy, string project, EnvironmentManifest manifest, E2EOptions options)
+    /// <summary>What every container that builds is given: the project, the task's packages, and the proxy with the environment's own hosts kept off it.</summary>
+    private static Dictionary<string, string> Common(TaskEnvironment name, string project, EnvironmentManifest manifest, E2EOptions options)
     {
         var env = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["S3L_COPY"] = copy,
             ["S3L_PROJECT"] = project,
-            ["NUGET_PACKAGES"] = $"{PackagesFolder}/packages",
+            ["NUGET_PACKAGES"] = $"{AllocationFolder}/nuget",
             ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1",
             ["DOTNET_NOLOGO"] = "1",
             ["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1"
