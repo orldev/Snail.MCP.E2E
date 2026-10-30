@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-    The one Snail.MCP.E2E server of this Mac, over HTTP on 127.0.0.1:8828, started at login and again whenever it
+    The one Snail.MCP.E2E server of this Mac, over HTTP on port 8828, started at login and again whenever it
     ends. Publishing with -p:SnailMcpInstall=true writes this job with the machine's paths beside the publications in
     ~/.s3l-mcp/Snail.MCP.E2E/ and restarts it when launchd holds this very job; otherwise it prints the commands
     that load it, which are the owner's to run.
@@ -12,8 +12,7 @@
     <string>s3l.mcp.e2e</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{{DOTNET}}</string>
-        <string>{{CURRENT}}/Snail.MCP.E2E.dll</string>
+        <string>{{CURRENT}}/Snail.MCP.E2E</string>
     </array>
     <key>WorkingDirectory</key>
     <string>{{HOME}}</string>

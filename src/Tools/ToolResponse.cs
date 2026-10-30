@@ -1,6 +1,7 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization.Metadata;
 using ModelContextProtocol.Protocol;
 using Snail.MCP.E2E.Application;
 using Snail.Sdk.Mcp.Hosting.Jobs;
@@ -16,6 +17,9 @@ public static class ToolResponse
         WriteIndented = false,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
+
+    /// <summary>The structured content's type information, generated: a native build looks nothing up at run time.</summary>
+    private static readonly JsonTypeInfo<JsonObject> Structured = new E2EJson(new JsonSerializerOptions(Options)).JsonObject;
 
     /// <summary>The answer as a tool result.</summary>
     public static CallToolResult From(Answer<EnvironmentStatus> answer) => From(Envelope(answer));
@@ -92,7 +96,7 @@ public static class ToolResponse
     public static CallToolResult Success(JsonObject data) => new()
     {
         Content = [new TextContentBlock { Text = new JsonObject { ["ok"] = true, ["data"] = data.DeepClone() }.ToJsonString(Options) }],
-        StructuredContent = JsonSerializer.SerializeToElement(data, Options)
+        StructuredContent = JsonSerializer.SerializeToElement(data, Structured)
     };
 
     /// <summary>A result saying why nothing happened.</summary>
@@ -100,7 +104,7 @@ public static class ToolResponse
     {
         IsError = true,
         Content = [new TextContentBlock { Text = new JsonObject { ["ok"] = false, ["error"] = error, ["hint"] = hint }.ToJsonString(Options) }],
-        StructuredContent = JsonSerializer.SerializeToElement(new JsonObject { ["error"] = error, ["hint"] = hint }, Options)
+        StructuredContent = JsonSerializer.SerializeToElement(new JsonObject { ["error"] = error, ["hint"] = hint }, Structured)
     };
 
     private static CallToolResult Failure<T>(Answer<T> answer) => Failure(answer.Error ?? "The call did not happen.", answer.Hint);

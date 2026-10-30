@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using ModelContextProtocol.Client;
 using Snail.Sdk.Mcp.Hosting;
 using Snail.Sdk.Mcp.Hosting.Jobs;
@@ -33,7 +35,7 @@ public sealed class ProcessContractTests : IAsyncLifetime
             RedirectStandardError = true
         };
 
-        start.Environment["ASPNETCORE_URLS"] = _address.ToString();
+        start.Environment["SNAIL_MCP_E2E_PORT"] = _address.Port.ToString(CultureInfo.InvariantCulture);
         start.Environment["SNAIL_MCP_E2E_NOMAD_ADDRESS"] = $"http://127.0.0.1:{FreePort()}";
         start.Environment["SNAIL_MCP_E2E_WORKSPACES_ROOT"] = _workspaces;
         start.Environment[ServerSettings.FileVariableOf("e2e")] = ServerProgram.NoSettingsFile;
@@ -160,6 +162,26 @@ public sealed class ProcessContractTests : IAsyncLifetime
 
         Assert.True(result.IsError);
         Assert.Contains("'e2e_down' was not granted", result.Text(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A page in a browser on the stand's machine that reaches the port sends <c>Origin</c>; the server used to build a
+    /// host of its own and answered it 200, so the page could call every tool.
+    /// </summary>
+    [Fact]
+    public async Task Mcp_RequestFromABrowserPage_IsRefused()
+    {
+        using var http = new HttpClient { BaseAddress = _address };
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/mcp", UriKind.Relative))
+        {
+            Content = new StringContent("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"page","version":"1"}}}""", Encoding.UTF8, "application/json")
+        };
+        request.Headers.Add("Accept", "application/json, text/event-stream");
+        request.Headers.Add("Origin", "https://evil.example");
+
+        using var answer = await http.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, answer.StatusCode);
     }
 
     /// <summary>A step's copy of a task under the workspaces, with a manifest, as the address names it.</summary>

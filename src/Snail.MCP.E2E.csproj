@@ -3,11 +3,12 @@
   <Sdk Name="Snail.Sdk.Mcp" />
 
   <!--
-    Framework-dependent and HTTP only (Snail.Sdk.Mcp): the server runs in its own container on the stand, beside the
-    Nomad agent it raises task environments through, and answers the workers of the platform at its port.
+    Native and HTTP only (Snail.Sdk.Mcp): the server runs in its own container on the stand, beside the Nomad agent it
+    raises task environments through, and answers the workers of the platform at its port. Native AOT starts it in a
+    third of the time and less than half the memory: about 40 ms and 39 MB against 128 ms and 97 MB framework-dependent
+    (to its first health answer, median of five, macOS arm64, 2026-10-30).
   -->
   <PropertyGroup>
-    <SnailMcpNative>false</SnailMcpNative>
     <SnailMcpTransport>Http</SnailMcpTransport>
     <SnailMcpContainer>true</SnailMcpContainer>
     <SnailStatusToolsBecause>e2e_status: says where the environment stands, the app and its services, not where a job does</SnailStatusToolsBecause>

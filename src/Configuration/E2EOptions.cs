@@ -8,6 +8,9 @@ namespace Snail.MCP.E2E.Configuration;
 /// </remarks>
 public sealed class E2EOptions
 {
+    /// <summary>Port the MCP endpoint and the health check listen on, on every interface: the container's published port is the boundary.</summary>
+    public int Port { get; set; } = 8828;
+
     /// <summary>Nomad's HTTP address, which environments are raised and stopped through.</summary>
     public string NomadAddress { get; set; } = "http://nomad:4646";
 

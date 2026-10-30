@@ -107,11 +107,9 @@ public static class EnvironmentJob
     {
         var manifest = plan.Manifest;
         var services = manifest.Services.Keys.ToList();
-        JsonArray tasks = [.. manifest.Services.Select(service => ServiceTask(plan.Name, service.Key, service.Value, manifest.App, services, options))];
-
-        tasks.Add(BuildTask(Parts.App, plan.Name, Run, AppEnv(plan, options), options));
-        tasks.Add(PrepareTask(plan.Name, plan.Copy, raise, options));
-        tasks.Add(KeepTask(plan.Name, options));
+        var serviceTasks = manifest.Services.Select(service => (JsonNode)ServiceTask(plan.Name, service.Key, service.Value, manifest.App, services, options));
+        JsonNode[] ownTasks = [BuildTask(Parts.App, plan.Name, Run, AppEnv(plan, options), options), PrepareTask(plan.Name, plan.Copy, raise, options), KeepTask(plan.Name, options)];
+        var tasks = new JsonArray([.. serviceTasks, .. ownTasks]);
 
         var job = new JsonObject
         {
@@ -154,7 +152,7 @@ public static class EnvironmentJob
             ["Type"] = "batch",
             ["Datacenters"] = new JsonArray(options.Datacenter),
             ["Meta"] = new JsonObject { ["s3l.e2e.copy"] = plan.Copy, ["s3l.e2e.run"] = run },
-            ["TaskGroups"] = new JsonArray(Group(Parts.Tests, [BuildTask(Parts.Tests, plan.Name, Test, env, options), PrepareTask(plan.Name, plan.Copy, run, options), KeepTask(plan.Name, options)], options, attempts: 0))
+            ["TaskGroups"] = new JsonArray(Group(Parts.Tests, new JsonArray(BuildTask(Parts.Tests, plan.Name, Test, env, options), PrepareTask(plan.Name, plan.Copy, run, options), KeepTask(plan.Name, options)), options, attempts: 0))
         };
 
         return job;

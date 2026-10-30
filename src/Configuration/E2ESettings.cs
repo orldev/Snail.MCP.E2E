@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Globalization;
 using Snail.Sdk.Mcp.Hosting;
 
 namespace Snail.MCP.E2E.Configuration;
@@ -12,6 +13,10 @@ public static class E2ESettings
 {
     /// <summary>The server's short name, which names its settings file and the prefix of its variables.</summary>
     public const string Name = "e2e";
+
+    /// <summary>The port the server listens on, on every interface: Port (<c>SNAIL_MCP_E2E_PORT</c>), read before the host exists.</summary>
+    public static int Port() =>
+        int.TryParse(Read()[nameof(E2EOptions.Port)], NumberStyles.None, CultureInfo.InvariantCulture, out int port) ? port : new E2EOptions().Port;
 
     /// <summary>The settings as they stand: the settings file found, then the process's variables.</summary>
     public static IConfiguration Read() => Read(ServerSettings.FileOf(Name), Environment.GetEnvironmentVariables());

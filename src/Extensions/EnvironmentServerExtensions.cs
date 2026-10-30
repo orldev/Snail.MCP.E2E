@@ -2,6 +2,7 @@ using Snail.MCP.E2E.Application;
 using Snail.MCP.E2E.Configuration;
 using Snail.MCP.E2E.Tools;
 using Snail.Sdk.Mcp.Hosting.Jobs;
+using Snail.Sdk.Mcp.Http;
 
 namespace Snail.MCP.E2E.Extensions;
 
@@ -11,7 +12,7 @@ public static class EnvironmentServerExtensions
     extension(WebApplicationBuilder builder)
     {
         /// <summary>The tools, the environments and the settings, read from the settings file and the <c>SNAIL_MCP_E2E_</c> variables only.</summary>
-        /// <remarks>Logging stays the web host's own, on standard output, where the container's log driver collects it.</remarks>
+        /// <remarks>The host is Snail.Sdk.Mcp.Http's container host: log lines on stderr, where the container's log driver collects them.</remarks>
         public WebApplicationBuilder ConfigureEnvironmentServer()
         {
             builder.Services
@@ -45,10 +46,14 @@ public static class EnvironmentServerExtensions
 
     extension(WebApplication app)
     {
-        /// <summary>The MCP endpoint and the health check Nomad polls.</summary>
+        /// <summary>The MCP endpoint behind the refusal of a browser's request, and the health check Nomad polls.</summary>
+        /// <remarks>
+        /// A page in a browser on a machine that reaches the port always sends <c>Origin</c>, and an agent's client never
+        /// does: <c>MapLocalMcp</c> answers such a request 403 before any tool runs.
+        /// </remarks>
         public WebApplication UseEnvironmentEndpoints()
         {
-            app.MapMcp("/mcp");
+            app.MapLocalMcp();
             app.MapGet("/healthz", () => Results.Ok());
 
             return app;
