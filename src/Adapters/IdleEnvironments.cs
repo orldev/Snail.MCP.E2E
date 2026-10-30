@@ -26,7 +26,7 @@ public sealed class IdleEnvironments(IEnvironmentJobs jobs, EnvironmentUse use, 
             {
                 await SweepAsync(stoppingToken);
             }
-            catch (Exception exception) when (exception is HttpRequestException or Snail.Toolkit.Nomad.NomadException or TaskCanceledException && !stoppingToken.IsCancellationRequested)
+            catch (SchedulerException exception)
             {
                 Log.SweepFailed(logger, exception);
             }

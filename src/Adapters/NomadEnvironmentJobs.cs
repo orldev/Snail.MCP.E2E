@@ -9,6 +9,10 @@ using Snail.Toolkit.Nomad.Models;
 namespace Snail.MCP.E2E.Adapters;
 
 /// <summary>TaskEnvironments as Nomad jobs: a service job per task, and a batch job per test run beside it.</summary>
+/// <remarks>
+/// Whatever Nomad's client throws — a refused connection, a timeout, an error status — leaves this adapter as a
+/// <see cref="SchedulerException"/>, the one failure its port knows; a cancellation the caller asked for stays one.
+/// </remarks>
 public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions> options, TimeProvider clock) : IEnvironmentJobs
 {
     /// <summary>How often a test run is looked at while it runs.</summary>
@@ -17,18 +21,63 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
     /// <summary>Bytes of each stream of a test run read back; the summary is at the end, and the answer keeps less.</summary>
     private const int TestLogBytes = 65536;
 
+    /// <summary>How many times the logs are read before a dropped stream counts as Nomad's failure.</summary>
+    /// <remarks>A client node drops a log stream now and then while the server is fine; the test run's result is only in that stream.</remarks>
+    private const int LogAttempts = 2;
+
     private static readonly string[] Ended = ["complete", "failed", "lost"];
 
     /// <inheritdoc />
-    public async Task RaiseAsync(EnvironmentPlan plan, CancellationToken cancellationToken) =>
-        await nomad.RegisterJobAsync(EnvironmentJob.Of(plan, options.Value), cancellationToken);
+    public Task RaiseAsync(EnvironmentPlan plan, CancellationToken cancellationToken) =>
+        AskAsync(() => nomad.RegisterJobAsync(EnvironmentJob.Of(plan, options.Value), cancellationToken), cancellationToken);
 
     /// <inheritdoc />
-    /// <remarks>
-    /// A job Nomad gave up on is dead but not gone: its last allocation still holds the app's failure, and the caller is
-    /// told that rather than that nothing runs.
-    /// </remarks>
-    public async Task<EnvironmentRun?> RunAsync(TaskEnvironment name, CancellationToken cancellationToken)
+    public Task<EnvironmentRun?> RunAsync(TaskEnvironment name, CancellationToken cancellationToken) =>
+        AskAsync(() => ReadRunAsync(name, cancellationToken), cancellationToken);
+
+    /// <inheritdoc />
+    public Task<bool> HasStoppedAsync(TaskEnvironment name, CancellationToken cancellationToken) =>
+        AskAsync(() => HasStoppedJobsAsync(name, cancellationToken), cancellationToken);
+
+    /// <inheritdoc />
+    public Task<string> LogsAsync(TaskEnvironment name, string part, bool isError, int bytes, CancellationToken cancellationToken) =>
+        AskAsync(() => ReadLogsAsync(name, part, isError, bytes, cancellationToken), cancellationToken);
+
+    /// <inheritdoc />
+    public Task<TestRun> TestAsync(TestPlan plan, TimeSpan timeout, CancellationToken cancellationToken) =>
+        AskAsync(() => RunTestsAsync(plan, timeout, cancellationToken), cancellationToken);
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<TaskEnvironment>> ListAsync(CancellationToken cancellationToken) =>
+        AskAsync(() => ListEnvironmentsAsync(cancellationToken), cancellationToken);
+
+    /// <inheritdoc />
+    public async Task<Answer<string>> ReachAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var agent = await AskAsync(() => nomad.GetAgentAsync(cancellationToken), cancellationToken);
+
+            return Answer.Ok(agent.Version);
+        }
+        catch (SchedulerException failure)
+        {
+            return Answer.Failed<string>(Messages.SchedulerDown(options.Value.NomadAddress, failure.Message), Messages.SchedulerDownHint);
+        }
+    }
+
+    /// <summary>The allocation that stands for the job now: the newest one meant to run, or the newest of all once none is.</summary>
+    /// <remarks>Nomad lists allocations in its own order, so the newest is found by creation time.</remarks>
+    internal static Allocation? Latest(NomadPage<Allocation> allocations)
+    {
+        var newestFirst = allocations.Items.OrderByDescending(allocation => allocation.CreateTime).ToList();
+        var running = newestFirst.FirstOrDefault(allocation => string.Equals(allocation.DesiredStatus, "run", StringComparison.Ordinal));
+
+        return running ?? newestFirst.FirstOrDefault();
+    }
+
+    /// <summary>A job Nomad gave up on is dead but not gone: its last allocation still holds the app's failure, and the caller is told that rather than that nothing runs.</summary>
+    private async Task<EnvironmentRun?> ReadRunAsync(TaskEnvironment name, CancellationToken cancellationToken)
     {
         var job = await nomad.GetJobAsync(name.Value, cancellationToken);
         if (job is null || job.IsStopped)
@@ -48,8 +97,7 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
         return new EnvironmentRun(allocation.Id, parts);
     }
 
-    /// <inheritdoc />
-    public async Task<bool> HasStoppedAsync(TaskEnvironment name, CancellationToken cancellationToken)
+    private async Task<bool> HasStoppedJobsAsync(TaskEnvironment name, CancellationToken cancellationToken)
     {
         var stopped = await nomad.StopJobAsync(name.Value, purge: true, cancellationToken);
         await nomad.StopJobAsync(name.Tests, purge: true, cancellationToken);
@@ -57,26 +105,30 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
         return stopped is not null;
     }
 
-    /// <inheritdoc />
-    public async Task<string> LogsAsync(TaskEnvironment name, string part, bool isError, int bytes, CancellationToken cancellationToken)
+    private async Task<string> ReadLogsAsync(TaskEnvironment name, string part, bool isError, int bytes, CancellationToken cancellationToken)
     {
         string job = part == Parts.Tests ? name.Tests : name.Value;
         var allocation = Latest(await nomad.ListAllocationsAsync(job, cancellationToken: cancellationToken));
         if (allocation is null)
             return string.Empty;
 
-        try
+        for (int attempt = 1; ; attempt++)
         {
-            return await nomad.ReadLogsAsync(allocation.Id, part, isError ? LogType.Stderr : LogType.Stdout, bytes, cancellationToken);
-        }
-        catch (NomadException exception) when (exception.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.BadRequest or HttpStatusCode.InternalServerError)
-        {
-            return string.Empty;
+            try
+            {
+                return await nomad.ReadLogsAsync(allocation.Id, part, isError ? LogType.Stderr : LogType.Stdout, bytes, cancellationToken);
+            }
+            catch (NomadException exception) when (exception.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.InternalServerError)
+            {
+                return string.Empty;
+            }
+            catch (HttpRequestException) when (attempt < LogAttempts)
+            {
+            }
         }
     }
 
-    /// <inheritdoc />
-    public async Task<TestRun> TestAsync(TestPlan plan, TimeSpan timeout, CancellationToken cancellationToken)
+    private async Task<TestRun> RunTestsAsync(TestPlan plan, TimeSpan timeout, CancellationToken cancellationToken)
     {
         await nomad.StopJobAsync(plan.Name.Tests, purge: true, cancellationToken);
         await nomad.RegisterJobAsync(EnvironmentJob.TestsOf(plan, Guid.NewGuid().ToString("N"), options.Value), cancellationToken);
@@ -94,42 +146,36 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
         if (!hasEnded)
             await nomad.StopJobAsync(plan.Name.Tests, purge: false, cancellationToken);
 
-        string stdout = await LogsAsync(plan.Name, Parts.Tests, false, TestLogBytes, cancellationToken);
-        string stderr = await LogsAsync(plan.Name, Parts.Tests, true, TestLogBytes, cancellationToken);
+        string stdout = await ReadLogsAsync(plan.Name, Parts.Tests, false, TestLogBytes, cancellationToken);
+        string stderr = await ReadLogsAsync(plan.Name, Parts.Tests, true, TestLogBytes, cancellationToken);
 
         return new TestRun($"{stdout}{stderr}", !hasEnded);
     }
 
-    /// <inheritdoc />
-    public async Task<IReadOnlyList<TaskEnvironment>> ListAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<TaskEnvironment>> ListEnvironmentsAsync(CancellationToken cancellationToken)
     {
         var jobs = await nomad.ListJobsAsync(TaskEnvironment.Prefix, cancellationToken: cancellationToken);
 
         return [.. jobs.Items.Where(job => !job.IsStopped && TaskEnvironment.IsEnvironment(job.Id)).Select(job => new TaskEnvironment(job.Id))];
     }
 
-    /// <inheritdoc />
-    public async Task<Answer<string>> ReachAsync(CancellationToken cancellationToken)
+    private static Task AskAsync(Func<Task> call, CancellationToken cancellationToken) =>
+        AskAsync(async () =>
+        {
+            await call();
+
+            return true;
+        }, cancellationToken);
+
+    private static async Task<T> AskAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken)
     {
         try
         {
-            var agent = await nomad.GetAgentAsync(cancellationToken);
-
-            return Answer.Ok(agent.Version);
+            return await call();
         }
-        catch (Exception exception) when (exception is HttpRequestException or NomadException or TaskCanceledException)
+        catch (Exception exception) when (exception is HttpRequestException or NomadException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
         {
-            return Answer.Failed<string>(Messages.SchedulerDown(options.Value.NomadAddress, exception.Message), Messages.SchedulerDownHint);
+            throw new SchedulerException(exception.Message, exception);
         }
-    }
-
-    /// <summary>The allocation that stands for the job now: the newest one meant to run, or the newest of all once none is.</summary>
-    /// <remarks>Nomad lists allocations in its own order, so the newest is found by creation time.</remarks>
-    internal static Allocation? Latest(NomadPage<Allocation> allocations)
-    {
-        var newestFirst = allocations.Items.OrderByDescending(allocation => allocation.CreateTime).ToList();
-        var running = newestFirst.FirstOrDefault(allocation => string.Equals(allocation.DesiredStatus, "run", StringComparison.Ordinal));
-
-        return running ?? newestFirst.FirstOrDefault();
     }
 }

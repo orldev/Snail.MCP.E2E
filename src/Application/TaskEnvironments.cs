@@ -24,7 +24,30 @@ public sealed class TaskEnvironments(
     private static readonly string[] Methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 
     /// <summary>Raises the environment from the copy, or replaces the one running, and waits until the app answers its health check.</summary>
-    public async Task<Answer<EnvironmentStatus>> UpAsync(CancellationToken cancellationToken)
+    public Task<Answer<EnvironmentStatus>> UpAsync(CancellationToken cancellationToken) =>
+        GuardAsync(() => RaiseAsync(cancellationToken));
+
+    /// <summary>Where the environment stands now, without waiting.</summary>
+    public Task<Answer<EnvironmentStatus>> StatusAsync(CancellationToken cancellationToken) =>
+        GuardAsync(() => ReadStatusAsync(cancellationToken));
+
+    /// <summary>Stops the environment and its test runs.</summary>
+    public Task<Answer<bool>> DownAsync(CancellationToken cancellationToken) =>
+        GuardAsync(() => StopAsync(cancellationToken));
+
+    /// <summary>Sends one request to the app and answers with what it said.</summary>
+    public Task<Answer<HttpExchange>> CallAsync(HttpCall call, CancellationToken cancellationToken) =>
+        GuardAsync(() => SendAsync(call, cancellationToken));
+
+    /// <summary>The end of one part's output: the app, a service, or the last test run.</summary>
+    public Task<Answer<LogTail>> LogsAsync(string part, int? bytes, CancellationToken cancellationToken) =>
+        GuardAsync(() => ReadLogsAsync(part, bytes, cancellationToken));
+
+    /// <summary>Runs the project's end-to-end tests against the running app and reads back how they went.</summary>
+    public Task<Answer<TestReport>> TestAsync(string? filter, CancellationToken cancellationToken) =>
+        GuardAsync(() => RunTestsAsync(filter, cancellationToken));
+
+    private async Task<Answer<EnvironmentStatus>> RaiseAsync(CancellationToken cancellationToken)
     {
         var read = await ProjectAsync(cancellationToken);
         if (read.Value is not { } project)
@@ -36,8 +59,7 @@ public sealed class TaskEnvironments(
         return Answer.Ok(await WaitAsync(project, cancellationToken));
     }
 
-    /// <summary>Where the environment stands now, without waiting.</summary>
-    public async Task<Answer<EnvironmentStatus>> StatusAsync(CancellationToken cancellationToken)
+    private async Task<Answer<EnvironmentStatus>> ReadStatusAsync(CancellationToken cancellationToken)
     {
         var read = await ProjectAsync(cancellationToken);
         if (read.Value is not { } project)
@@ -46,8 +68,7 @@ public sealed class TaskEnvironments(
         return Answer.Ok(await LookAsync(project, cancellationToken));
     }
 
-    /// <summary>Stops the environment and its test runs.</summary>
-    public async Task<Answer<bool>> DownAsync(CancellationToken cancellationToken)
+    private async Task<Answer<bool>> StopAsync(CancellationToken cancellationToken)
     {
         var place = session.Current();
         if (place.Value is not { } copy)
@@ -59,13 +80,12 @@ public sealed class TaskEnvironments(
         return Answer.Ok(hadRun);
     }
 
-    /// <summary>Sends one request to the app and answers with what it said.</summary>
-    public async Task<Answer<HttpExchange>> CallAsync(HttpCall call, CancellationToken cancellationToken)
+    private async Task<Answer<HttpExchange>> SendAsync(HttpCall call, CancellationToken cancellationToken)
     {
         if (!Methods.Contains(call.Method, StringComparer.OrdinalIgnoreCase))
             return Answer.Failed<HttpExchange>(Messages.BadMethod(call.Method));
 
-        if (!call.Path.StartsWith('/') || call.Path.StartsWith("//", StringComparison.Ordinal))
+        if (!AppAddress.IsAppPath(call.Path))
             return Answer.Failed<HttpExchange>(Messages.BadPath(call.Path));
 
         var read = await RunningAsync(cancellationToken);
@@ -77,8 +97,7 @@ public sealed class TaskEnvironments(
         return exchange is null ? Answer.Failed<HttpExchange>(Messages.Unreachable, Messages.NotRaisedHint) : Answer.Ok(exchange);
     }
 
-    /// <summary>The end of one part's output: the app, a service, or the last test run.</summary>
-    public async Task<Answer<LogTail>> LogsAsync(string part, int? bytes, CancellationToken cancellationToken)
+    private async Task<Answer<LogTail>> ReadLogsAsync(string part, int? bytes, CancellationToken cancellationToken)
     {
         var read = await RunningAsync(cancellationToken);
         if (read.Value is not { } project)
@@ -96,8 +115,7 @@ public sealed class TaskEnvironments(
         return Answer.Ok(new LogTail(part, stdout, stderr));
     }
 
-    /// <summary>Runs the project's end-to-end tests against the running app and reads back how they went.</summary>
-    public async Task<Answer<TestReport>> TestAsync(string? filter, CancellationToken cancellationToken)
+    private async Task<Answer<TestReport>> RunTestsAsync(string? filter, CancellationToken cancellationToken)
     {
         var read = await RunningAsync(cancellationToken);
         if (read.Value is not { } project)
@@ -182,6 +200,19 @@ public sealed class TaskEnvironments(
         return manifest.Value is { } read
             ? Answer.Ok(new Project(copy, read))
             : Answer.Failed<Project>(manifest.Error!, manifest.Hint);
+    }
+
+    /// <summary>The answer of a call, or what Nomad's failure means for it: nothing happened, and why.</summary>
+    private async Task<Answer<T>> GuardAsync<T>(Func<Task<Answer<T>>> call)
+    {
+        try
+        {
+            return await call();
+        }
+        catch (SchedulerException failure)
+        {
+            return Answer.Failed<T>(Messages.SchedulerDown(options.Value.NomadAddress, failure.Message), Messages.SchedulerDownHint);
+        }
     }
 
     private static Uri AppOf(Project project) => new($"http://{project.Copy.Environment.App}:{project.Manifest.App.Port}/");

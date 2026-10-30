@@ -21,8 +21,10 @@ namespace Snail.MCP.E2E.Adapters;
 /// <c>--no-launch-profile</c>: a launch profile would choose its own address and environment over the ones given here.
 /// </para>
 /// <para>
-/// Nomad interpolates <c>${…}</c> in every string of a task's config, so the shell's own <c>${…}</c> is written <c>$${…}</c>;
-/// unescaped, the test run failed validation before it started.
+/// Nomad interpolates <c>${…}</c> in every string of a task's config and environment, so the shell's own <c>${…}</c> is
+/// written <c>$${…}</c>; unescaped, the test run failed validation before it started. Every value that comes from the
+/// manifest or the caller is escaped the same way: unescaped, <c>${attr.unique.hostname}</c> in a setting read the
+/// node's attributes, and a value that meant <c>${…}</c> literally arrived changed.
 /// </para>
 /// </remarks>
 public static class EnvironmentJob
@@ -117,13 +119,13 @@ public static class EnvironmentJob
     {
         var config = new JsonObject
         {
-            ["image"] = part.Image,
+            ["image"] = Literal(part.Image),
             ["network_mode"] = options.Network,
             ["network_aliases"] = new JsonArray(name.HostOf(service))
         };
 
         if (part.Args.Count > 0)
-            config["args"] = new JsonArray([.. part.Args.Select(argument => (JsonNode)argument)]);
+            config["args"] = new JsonArray([.. part.Args.Select(argument => (JsonNode)Literal(argument))]);
 
         return new JsonObject
         {
@@ -199,5 +201,8 @@ public static class EnvironmentJob
     }
 
     private static JsonObject Env(IReadOnlyDictionary<string, string> settings) =>
-        new([.. settings.Select(setting => KeyValuePair.Create(setting.Key, (JsonNode?)setting.Value))]);
+        new([.. settings.Select(setting => KeyValuePair.Create(setting.Key, (JsonNode?)Literal(setting.Value)))]);
+
+    /// <summary>The value as Nomad is to pass it on, with every <c>${</c> kept from its interpolation.</summary>
+    private static string Literal(string value) => value.Replace("${", "$${", StringComparison.Ordinal);
 }

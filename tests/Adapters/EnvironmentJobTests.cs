@@ -21,8 +21,8 @@ public sealed class EnvironmentJobTests
 
         Assert.Equal("e2e-0c2b9e1f", (string?)job["ID"]);
         Assert.Equal("s3l-e2e", (string?)Task(job, "app")["Config"]!["network_mode"]);
-        Assert.Equal("e2e-0c2b9e1f-app", (string?)Task(job, "app")["Config"]!["network_aliases"]![0]);
-        Assert.Equal("e2e-0c2b9e1f-mongo", (string?)Task(job, "mongo")["Config"]!["network_aliases"]![0]);
+        Assert.Equal("e2e-0c2b9e1f--app", (string?)Task(job, "app")["Config"]!["network_aliases"]![0]);
+        Assert.Equal("e2e-0c2b9e1f--mongo", (string?)Task(job, "mongo")["Config"]!["network_aliases"]![0]);
         Assert.Equal("mongo:8.0", (string?)Task(job, "mongo")["Config"]!["image"]);
     }
 
@@ -35,7 +35,7 @@ public sealed class EnvironmentJobTests
         Assert.Equal(Stage.Copy, (string?)app["Env"]!["S3L_COPY"]);
         Assert.Equal("8080", (string?)app["Env"]!["S3L_PORT"]);
         Assert.Equal("http://mcp-e2e:3128", (string?)app["Env"]!["HTTPS_PROXY"]);
-        Assert.Contains("e2e-0c2b9e1f-mongo", (string?)app["Env"]!["NO_PROXY"], StringComparison.Ordinal);
+        Assert.Contains("e2e-0c2b9e1f--mongo", (string?)app["Env"]!["NO_PROXY"], StringComparison.Ordinal);
         Assert.True((bool?)app["VolumeMounts"]![0]!["ReadOnly"]);
         Assert.Equal("host-to-task", (string?)app["VolumeMounts"]![0]!["PropagationMode"]);
         Assert.True((bool?)job["TaskGroups"]![0]!["Volumes"]!["workspaces"]!["ReadOnly"]);
@@ -48,7 +48,7 @@ public sealed class EnvironmentJobTests
 
         var job = EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, manifest), Options);
 
-        Assert.Equal("mongodb://e2e-0c2b9e1f-mongo:27017", (string?)Task(job, "app")["Env"]!["Mongo__Url"]);
+        Assert.Equal("mongodb://e2e-0c2b9e1f--mongo:27017", (string?)Task(job, "app")["Env"]!["Mongo__Url"]);
     }
 
     [Fact]
@@ -80,9 +80,37 @@ public sealed class EnvironmentJobTests
         var job = EnvironmentJob.TestsOf(plan, "r1", Options);
         var tests = Task(job, "tests");
 
-        Assert.Equal(("e2e-0c2b9e1f-tests", "batch", "r1"), ((string?)job["ID"], (string?)job["Type"], (string?)job["Meta"]!["s3l.e2e.run"]));
-        Assert.Equal("http://e2e-0c2b9e1f-app:8080", (string?)tests["Env"]!["APP_URL"]);
+        Assert.Equal(("e2e-0c2b9e1f--tests", "batch", "r1"), ((string?)job["ID"], (string?)job["Type"], (string?)job["Meta"]!["s3l.e2e.run"]));
+        Assert.Equal("http://e2e-0c2b9e1f--app:8080", (string?)tests["Env"]!["APP_URL"]);
         Assert.Equal("FullyQualifiedName~Orders", (string?)tests["Env"]!["S3L_FILTER"]);
         Assert.Equal(0, (int?)job["TaskGroups"]![0]!["RestartPolicy"]!["Attempts"]);
+    }
+
+    /// <summary>Unescaped, a setting of the manifest read the node's attributes through Nomad's interpolation.</summary>
+    [Fact]
+    public void Of_ManifestValuesSpellingAnInterpolation_ReachNomadEscaped()
+    {
+        var mongo = new ServicePart("mongo:8.0", 27017, new Dictionary<string, string> { ["HOST"] = "${attr.unique.hostname}" }, ["--bind", "${NOMAD_IP_db}"]);
+        var manifest = Stage.Shop with
+        {
+            App = Stage.Shop.App with { Env = new Dictionary<string, string> { ["Secret"] = "${node.unique.id}" } },
+            Services = new Dictionary<string, ServicePart> { ["mongo"] = mongo }
+        };
+
+        var job = EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, manifest), Options);
+
+        Assert.Equal("$${node.unique.id}", (string?)Task(job, "app")["Env"]!["Secret"]);
+        Assert.Equal("$${attr.unique.hostname}", (string?)Task(job, "mongo")["Env"]!["HOST"]);
+        Assert.Equal("$${NOMAD_IP_db}", (string?)Task(job, "mongo")["Config"]!["args"]![1]);
+    }
+
+    [Fact]
+    public void TestsOf_FilterSpellingAnInterpolation_ReachesNomadEscaped()
+    {
+        var plan = new TestPlan(Name, Stage.Copy, Stage.Shop, Stage.Shop.Tests!, "Name=${node.unique.id}");
+
+        var job = EnvironmentJob.TestsOf(plan, "r1", Options);
+
+        Assert.Equal("Name=$${node.unique.id}", (string?)Task(job, "tests")["Env"]!["S3L_FILTER"]);
     }
 }

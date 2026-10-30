@@ -16,7 +16,8 @@ public sealed class HttpAppCalls(IHttpClientFactory clients) : IAppCalls
     /// <inheritdoc />
     public async Task<HttpExchange?> SendAsync(Uri app, HttpCall call, int limit, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(new HttpMethod(call.Method), new Uri(app, call.Path.TrimStart('/')));
+        var target = AppAddress.Of(app, call.Path) ?? throw new ArgumentException($"\"{call.Path}\" leaves the app at {app}.", nameof(call));
+        using var request = new HttpRequestMessage(new HttpMethod(call.Method), target);
 
         if (call.Body is { } body)
             request.Content = new StringContent(body, Encoding.UTF8, call.ContentType);

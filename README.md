@@ -42,7 +42,7 @@ default to 8080 and `/health`; comments and trailing commas are allowed. Snail.S
   the .NET SDK image from a fresh copy of the working copy, which is mounted read-only.
 - Everything sits on one internal Docker network. The way out is the server's proxy, which lets through NuGet's hosts
   only; packages are kept in a shared volume.
-- The tests run as the batch job `e2e-<task>-tests` in the same network, with `APP_URL` pointing at the app.
+- The tests run as the batch job `e2e-<task>--tests` in the same network, with `APP_URL` pointing at the app.
 - An environment nobody called for 60 minutes is stopped.
 
 ## Running it

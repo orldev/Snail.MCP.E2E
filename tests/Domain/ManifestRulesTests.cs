@@ -43,6 +43,10 @@ public sealed class ManifestRulesTests
     [InlineData("tests")]
     [InlineData("Mongo")]
     [InlineData("my_db")]
+    [InlineData("b--c")]
+    [InlineData("db-")]
+    [InlineData("1db")]
+    [InlineData("a-name-longer-than-20")]
     public void Problems_ServiceWithANameThePlatformKeepsOrCannotHost_IsNamed(string name)
     {
         var services = new Dictionary<string, ServicePart> { [name] = new("mongo:8.0", null, new Dictionary<string, string>(), []) };
@@ -58,6 +62,15 @@ public sealed class ManifestRulesTests
         var problems = ManifestRules.Problems(Manifest(new AppPart("src/Api/Api.csproj", 70000, "health", new Dictionary<string, string>())));
 
         Assert.Contains(problems, problem => problem.StartsWith("app.port", StringComparison.Ordinal));
+        Assert.Contains(problems, problem => problem.StartsWith("app.health", StringComparison.Ordinal));
+    }
+
+    /// <summary>The health check is sent from the server like a call of e2e_http, so a health path naming Nomad would reach Nomad.</summary>
+    [Fact]
+    public void Problems_HealthNamingAnotherHost_IsNamed()
+    {
+        var problems = ManifestRules.Problems(Manifest(new AppPart("src/Api/Api.csproj", 8080, "//nomad:4646/v1/jobs", new Dictionary<string, string>())));
+
         Assert.Contains(problems, problem => problem.StartsWith("app.health", StringComparison.Ordinal));
     }
 }

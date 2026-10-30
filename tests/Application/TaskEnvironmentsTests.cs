@@ -1,4 +1,5 @@
 using Snail.MCP.E2E.Application;
+using Snail.MCP.E2E.Application.Ports;
 
 namespace Snail.MCP.E2E.Tests.Application;
 
@@ -12,7 +13,7 @@ public sealed class TaskEnvironmentsTests
         var answer = await stage.Environments().UpAsync(CancellationToken.None);
 
         Assert.Equal(EnvironmentState.Ready, answer.Value!.State);
-        Assert.Equal("http://e2e-0c2b9e1f-app:8080/", answer.Value.AppUrl);
+        Assert.Equal("http://e2e-0c2b9e1f--app:8080/", answer.Value.AppUrl);
         Assert.Equal(Stage.Copy, Assert.Single(stage.Jobs.Raised).Copy);
         Assert.Equal("/health", stage.Calls.Sent.Last().Call.Path);
     }
@@ -88,6 +89,7 @@ public sealed class TaskEnvironmentsTests
     [InlineData("TRACE", "/orders")]
     [InlineData("GET", "orders")]
     [InlineData("GET", "//evil.example/x")]
+    [InlineData("POST", "//nomad:4646/v1/jobs")]
     public async Task CallAsync_MethodOrPathNotTheApps_IsRefusedBeforeAnyRequest(string method, string path)
     {
         var stage = new Stage();
@@ -109,7 +111,7 @@ public sealed class TaskEnvironmentsTests
         var answer = await stage.Environments().CallAsync(new HttpCall("post", "/orders", "{}", "application/json", []), CancellationToken.None);
 
         Assert.Equal(200, answer.Value!.Status);
-        Assert.Equal(("http://e2e-0c2b9e1f-app:8080/", "POST"), (stage.Calls.Sent.Last().App.ToString(), stage.Calls.Sent.Last().Call.Method));
+        Assert.Equal(("http://e2e-0c2b9e1f--app:8080/", "POST"), (stage.Calls.Sent.Last().App.ToString(), stage.Calls.Sent.Last().Call.Method));
     }
 
     [Fact]
@@ -172,4 +174,35 @@ public sealed class TaskEnvironmentsTests
         Assert.True(down.Value);
         Assert.Equal(EnvironmentState.Stopped, status.Value!.State);
     }
+
+    /// <summary>Each of these once ended in an error the MCP SDK said nothing about: Nomad's failure flew past the answer.</summary>
+    [Theory]
+    [InlineData("up")]
+    [InlineData("status")]
+    [InlineData("down")]
+    [InlineData("http")]
+    [InlineData("logs")]
+    [InlineData("test")]
+    public async Task AnyCall_NomadGone_AnswersWhereNomadWasLookedForAndWhatToDo(string tool)
+    {
+        var stage = new Stage();
+        await stage.Environments().UpAsync(CancellationToken.None);
+        stage.Jobs.Failure = new SchedulerException("Connection refused");
+        var environments = stage.Environments();
+
+        (string? Error, string? Hint) answer = tool switch
+        {
+            "up" => Said(await environments.UpAsync(CancellationToken.None)),
+            "status" => Said(await environments.StatusAsync(CancellationToken.None)),
+            "down" => Said(await environments.DownAsync(CancellationToken.None)),
+            "http" => Said(await environments.CallAsync(new HttpCall("GET", "/orders", null, "application/json", []), CancellationToken.None)),
+            "logs" => Said(await environments.LogsAsync("app", null, CancellationToken.None)),
+            _ => Said(await environments.TestAsync(null, CancellationToken.None))
+        };
+
+        Assert.Equal(Messages.SchedulerDown(stage.Options.NomadAddress, "Connection refused"), answer.Error);
+        Assert.Equal(Messages.SchedulerDownHint, answer.Hint);
+    }
+
+    private static (string? Error, string? Hint) Said<T>(Answer<T> answer) => (answer.Error, answer.Hint);
 }
