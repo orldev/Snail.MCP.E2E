@@ -73,4 +73,15 @@ public sealed class ManifestRulesTests
 
         Assert.Contains(problems, problem => problem.StartsWith("app.health", StringComparison.Ordinal));
     }
+
+    /// <summary>Nomad has no escape in a task's environment: <c>$${node.unique.id}</c> arrived as <c>$</c> and the node's id on Nomad 1.10.5.</summary>
+    [Fact]
+    public void Problems_SettingThatSpellsAnInterpolation_IsNamed()
+    {
+        var app = new AppPart("src/Api/Api.csproj", 8080, "/health", new Dictionary<string, string> { ["Secret"] = "${node.unique.id}" });
+
+        var problems = ManifestRules.Problems(Manifest(app));
+
+        Assert.Contains(problems, problem => problem.StartsWith("app.env.Secret holds ${", StringComparison.Ordinal));
+    }
 }

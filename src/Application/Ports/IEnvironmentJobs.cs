@@ -3,11 +3,12 @@ namespace Snail.MCP.E2E.Application.Ports;
 /// <summary>Where environments run: raised, read, stopped and asked for their logs.</summary>
 public interface IEnvironmentJobs
 {
-    /// <summary>Raises the environment, or replaces the one running under its name.</summary>
-    Task RaiseAsync(EnvironmentPlan plan, CancellationToken cancellationToken);
+    /// <summary>Raises the environment, or replaces the one running under its name, and answers what stood before.</summary>
+    Task<RaiseMark> RaiseAsync(EnvironmentPlan plan, CancellationToken cancellationToken);
 
     /// <summary>The environment's parts as they run; null when no environment runs under the name.</summary>
-    Task<EnvironmentRun?> RunAsync(TaskEnvironment name, CancellationToken cancellationToken);
+    /// <remarks>An allocation that stood before <paramref name="since"/> does not count.</remarks>
+    Task<EnvironmentRun?> RunAsync(TaskEnvironment name, RaiseMark since, CancellationToken cancellationToken);
 
     /// <summary>Stops the environment and its test runs; answers whether one ran.</summary>
     Task<bool> HasStoppedAsync(TaskEnvironment name, CancellationToken cancellationToken);

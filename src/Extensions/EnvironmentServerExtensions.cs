@@ -1,3 +1,4 @@
+using Snail.MCP.E2E.Application;
 using Snail.MCP.E2E.Configuration;
 using Snail.MCP.E2E.Tools;
 using Snail.Sdk.Mcp.Hosting.Jobs;
@@ -31,11 +32,16 @@ public static class EnvironmentServerExtensions
                 .WithHttpTransport()
                 .WithTools<EnvironmentTools>()
                 .WithTools<DiagnosticsTools>()
-                .WithJobs("e2e");
+                .WithJobs("e2e", OwnerOf);
 
             return builder;
         }
     }
+
+    /// <summary>The owner of a request's jobs: the environment of the task whose copy the session's address names.</summary>
+    /// <remarks>One server serves every task of the platform; a session of one task must not read another's test output.</remarks>
+    private static string? OwnerOf(IServiceProvider services) =>
+        services.GetService<SessionCopy>()?.Current().Value?.Environment.Value;
 
     extension(WebApplication app)
     {

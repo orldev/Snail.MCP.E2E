@@ -28,15 +28,15 @@ public static class ManifestRules
 
         problems.AddRange(services.Where(name => !IsServiceName(name)).Select(name => $"\"{name}\" cannot name a service: up to {MaxServiceName} lower-case letters and digits, starting with a letter, in groups joined by single dashes, not app or tests"));
         problems.AddRange(manifest.Services.Where(service => string.IsNullOrWhiteSpace(service.Value.Image)).Select(service => $"services.{service.Key} names no image"));
-        problems.AddRange(UnknownMarks("app.env", manifest.App.Env, services));
+        problems.AddRange(SettingProblems("app.env", manifest.App.Env, services));
 
         foreach (var service in manifest.Services)
-            problems.AddRange(UnknownMarks($"services.{service.Key}.env", service.Value.Env, services));
+            problems.AddRange(SettingProblems($"services.{service.Key}.env", service.Value.Env, services));
 
         if (manifest.Tests is { } tests)
         {
             problems.AddRange(ProjectProblems("tests.project", tests.Project));
-            problems.AddRange(UnknownMarks("tests.env", tests.Env, services));
+            problems.AddRange(SettingProblems("tests.env", tests.Env, services));
         }
 
         return problems;
@@ -58,8 +58,20 @@ public static class ManifestRules
             yield return $"{where} \"{project}\" is not a .csproj or .fsproj";
     }
 
-    private static IEnumerable<string> UnknownMarks(string where, IReadOnlyDictionary<string, string> settings, IReadOnlyCollection<string> services) =>
-        settings.SelectMany(setting => Placeholders.Unknown(setting.Value, services).Select(mark => $"{where}.{setting.Key} names {{{mark}}}, which is neither app nor a service"));
+    /// <summary>Whether a value would reach a task's environment unchanged: Nomad fills every <c>${…}</c> there with the node's own values, and has no escape for it.</summary>
+    public static bool IsLiteral(string value) => !value.Contains("${", StringComparison.Ordinal);
+
+    private static IEnumerable<string> SettingProblems(string where, IReadOnlyDictionary<string, string> settings, IReadOnlyCollection<string> services)
+    {
+        foreach (var setting in settings)
+        {
+            foreach (string mark in Placeholders.Unknown(setting.Value, services))
+                yield return $"{where}.{setting.Key} names {{{mark}}}, which is neither app nor a service";
+
+            if (!IsLiteral(setting.Value))
+                yield return $"{where}.{setting.Key} holds ${{…}}, which Nomad fills with the node's own values: write the value without ${{";
+        }
+    }
 
     private static bool IsServiceName(string name) =>
         name is [var first, ..] && char.IsAsciiLetterLower(first) && name.Length <= MaxServiceName && TaskEnvironment.IsLabel(name) && name is not (Parts.App or Parts.Tests);

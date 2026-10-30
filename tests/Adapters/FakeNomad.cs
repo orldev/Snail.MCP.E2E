@@ -23,7 +23,7 @@ internal sealed class FakeNomad : HttpMessageHandler
         return new NomadClient(http, Options.Create(new NomadOptions { Address = "http://nomad:4646" }));
     }
 
-    /// <summary>Answers a request with JSON; the last answer of a path is repeated once its queue runs out.</summary>
+    /// <summary>Answers a request with JSON; the last answer of a path is repeated once its queue runs out. A log path ending in <c>?stderr</c> answers the standard error stream alone.</summary>
     public FakeNomad Json(string method, string path, string json, HttpStatusCode status = HttpStatusCode.OK) =>
         Answer(method, path, () => new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") });
 
@@ -53,7 +53,9 @@ internal sealed class FakeNomad : HttpMessageHandler
         if (Down is { } down)
             throw down;
 
-        if (!_answers.TryGetValue($"{request.Method.Method} {path}", out var queue))
+        string stream = request.RequestUri.Query.Contains("type=stderr", StringComparison.Ordinal) ? "?stderr" : string.Empty;
+        bool isAnswered = _answers.TryGetValue($"{request.Method.Method} {path}{stream}", out var queue) || (stream.Length == 0 && _answers.TryGetValue($"{request.Method.Method} {path}", out queue));
+        if (!isAnswered || queue is null)
             return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent(string.Empty) };
 
         var answer = queue.Count > 1 ? queue.Dequeue() : queue.Peek();

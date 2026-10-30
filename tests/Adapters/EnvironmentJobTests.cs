@@ -17,7 +17,7 @@ public sealed class EnvironmentJobTests
     [Fact]
     public void Of_Shop_PutsTheAppAndItsServiceOnTheEnvironmentsNetworkUnderTheirHosts()
     {
-        var job = EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), Options);
+        var job = EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), "r1", Options);
 
         Assert.Equal("e2e-0c2b9e1f", (string?)job["ID"]);
         Assert.Equal("s3l-e2e", (string?)Task(job, "app")["Config"]!["network_mode"]);
@@ -29,7 +29,7 @@ public sealed class EnvironmentJobTests
     [Fact]
     public void Of_Shop_GivesTheAppTheProxyWithItsOwnHostsKeptOff()
     {
-        var app = Task(EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), Options), "app");
+        var app = Task(EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), "r1", Options), "app");
 
         Assert.Equal("8080", (string?)app["Env"]!["S3L_PORT"]);
         Assert.Equal("http://mcp-e2e:3128", (string?)app["Env"]!["HTTPS_PROXY"]);
@@ -40,7 +40,7 @@ public sealed class EnvironmentJobTests
     [Fact]
     public void Of_Shop_AppSeesNeitherTheWorkspacesNorThePackageVolume()
     {
-        var app = Task(EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), Options), "app");
+        var app = Task(EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), "r1", Options), "app");
 
         Assert.Null(app["VolumeMounts"]);
         Assert.Null(app["Config"]!["mounts"]);
@@ -52,7 +52,7 @@ public sealed class EnvironmentJobTests
     [Fact]
     public void Of_Shop_PreparesTheCopyFirstFromTheWorkspacesReadOnlyAndOffTheNetwork()
     {
-        var job = EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), Options);
+        var job = EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), "r1", Options);
         var prepare = Task(job, Parts.Prepare);
 
         Assert.Equal("prestart", (string?)prepare["Lifecycle"]!["Hook"]);
@@ -68,7 +68,7 @@ public sealed class EnvironmentJobTests
     [Fact]
     public void Of_Shop_KeepsThePackagesAfterwardsThroughAFreshFolderOfTheTask()
     {
-        var keep = Task(EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), Options), Parts.Keep);
+        var keep = Task(EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), "r1", Options), Parts.Keep);
         string script = (string)keep["Config"]!["args"]![1]!;
 
         Assert.Equal("poststop", (string?)keep["Lifecycle"]!["Hook"]);
@@ -94,7 +94,7 @@ public sealed class EnvironmentJobTests
     {
         var manifest = Stage.Shop with { App = Stage.Shop.App with { Env = new Dictionary<string, string> { ["Mongo__Url"] = "mongodb://{mongo}:27017" } } };
 
-        var job = EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, manifest), Options);
+        var job = EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, manifest), "r1", Options);
 
         Assert.Equal("mongodb://e2e-0c2b9e1f--mongo:27017", (string?)Task(job, "app")["Env"]!["Mongo__Url"]);
     }
@@ -102,7 +102,7 @@ public sealed class EnvironmentJobTests
     [Fact]
     public void Of_NoProxyConfigured_LeavesTheAppWithoutOne()
     {
-        var job = EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), new E2EOptions());
+        var job = EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), "r1", new E2EOptions());
 
         Assert.Null(Task(job, "app")["Env"]!["HTTPS_PROXY"]);
     }
@@ -112,7 +112,7 @@ public sealed class EnvironmentJobTests
     public void Scripts_ShellExpansions_AreEscapedFromNomad()
     {
         var plan = new TestPlan(Name, Stage.Copy, Stage.Shop, Stage.Shop.Tests!, null);
-        JsonObject[] jobs = [EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), Options), EnvironmentJob.TestsOf(plan, "r1", Options)];
+        JsonObject[] jobs = [EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, Stage.Shop), "r1", Options), EnvironmentJob.TestsOf(plan, "r1", Options)];
 
         IEnumerable<string> scripts = jobs.SelectMany(job => job["TaskGroups"]![0]!["Tasks"]!.AsArray())
             .Select(task => task!["Config"]!["args"]?.AsArray().LastOrDefault()?.GetValue<string>() ?? string.Empty);
@@ -146,31 +146,40 @@ public sealed class EnvironmentJobTests
         Assert.Contains("timeout -k 10 \"$S3L_TIMEOUT\" dotnet test", (string?)tests["Config"]!["args"]![1], StringComparison.Ordinal);
     }
 
-    /// <summary>Unescaped, a setting of the manifest read the node's attributes through Nomad's interpolation.</summary>
     [Fact]
-    public void Of_ManifestValuesSpellingAnInterpolation_ReachNomadEscaped()
+    public void TestsOf_Run_SaysTheTestsEndedAndHoldsItsOutputUntilStopped()
     {
-        var mongo = new ServicePart("mongo:8.0", 27017, new Dictionary<string, string> { ["HOST"] = "${attr.unique.hostname}" }, ["--bind", "${NOMAD_IP_db}"]);
-        var manifest = Stage.Shop with
-        {
-            App = Stage.Shop.App with { Env = new Dictionary<string, string> { ["Secret"] = "${node.unique.id}" } },
-            Services = new Dictionary<string, ServicePart> { ["mongo"] = mongo }
-        };
+        var plan = new TestPlan(Name, Stage.Copy, Stage.Shop, Stage.Shop.Tests!, null);
 
-        var job = EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, manifest), Options);
+        var tests = Task(EnvironmentJob.TestsOf(plan, "r1", Options), "tests");
+        string script = (string)tests["Config"]!["args"]![1]!;
 
-        Assert.Equal("$${node.unique.id}", (string?)Task(job, "app")["Env"]!["Secret"]);
-        Assert.Equal("$${attr.unique.hostname}", (string?)Task(job, "mongo")["Env"]!["HOST"]);
+        Assert.Contains($"echo \"{EnvironmentJob.TestsEnded} $?\"", script, StringComparison.Ordinal);
+        Assert.EndsWith("exec sleep \"$S3L_HOLD\"", script.TrimEnd(), StringComparison.Ordinal);
+        Assert.Equal($"{EnvironmentJob.HoldSeconds}", (string?)tests["Env"]!["S3L_HOLD"]);
+    }
+
+    /// <summary>A service's image and arguments are config, where Nomad honours <c>$${</c>; unescaped they read the node's values.</summary>
+    [Fact]
+    public void Of_ServiceArgumentSpellingAnInterpolation_ReachesNomadEscaped()
+    {
+        var mongo = new ServicePart("mongo:8.0", 27017, new Dictionary<string, string>(), ["--bind", "${NOMAD_IP_db}"]);
+        var manifest = Stage.Shop with { Services = new Dictionary<string, ServicePart> { ["mongo"] = mongo } };
+
+        var job = EnvironmentJob.Of(new EnvironmentPlan(Name, Stage.Copy, manifest), "r1", Options);
+
         Assert.Equal("$${NOMAD_IP_db}", (string?)Task(job, "mongo")["Config"]!["args"]![1]);
     }
 
+    /// <summary>A raise of the same copy registered the same job: Nomad kept the app running on the code from before the change.</summary>
     [Fact]
-    public void TestsOf_FilterSpellingAnInterpolation_ReachesNomadEscaped()
+    public void Of_TwoRaisesOfOneCopy_DifferWhereNomadReplacesTheAllocation()
     {
-        var plan = new TestPlan(Name, Stage.Copy, Stage.Shop, Stage.Shop.Tests!, "Name=${node.unique.id}");
+        var plan = new EnvironmentPlan(Name, Stage.Copy, Stage.Shop);
 
-        var job = EnvironmentJob.TestsOf(plan, "r1", Options);
+        var first = Task(EnvironmentJob.Of(plan, "r1", Options), Parts.Prepare);
+        var second = Task(EnvironmentJob.Of(plan, "r2", Options), Parts.Prepare);
 
-        Assert.Equal("Name=$${node.unique.id}", (string?)Task(job, "tests")["Env"]!["S3L_FILTER"]);
+        Assert.NotEqual((string?)first["Env"]!["S3L_MARK"], (string?)second["Env"]!["S3L_MARK"]);
     }
 }

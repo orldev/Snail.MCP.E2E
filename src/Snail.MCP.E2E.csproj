@@ -10,6 +10,7 @@
     <SnailMcpNative>false</SnailMcpNative>
     <SnailMcpTransport>Http</SnailMcpTransport>
     <SnailMcpContainer>true</SnailMcpContainer>
+    <SnailStatusToolsBecause>e2e_status: says where the environment stands, the app and its services, not where a job does</SnailStatusToolsBecause>
     <Version>0.1.0</Version>
     <Description>Task environments for .NET apps: run the app with its services, call its API, read logs, run tests</Description>
     <PackageTags>mcp;mcp-server;modelcontextprotocol;ai;e2e;nomad</PackageTags>

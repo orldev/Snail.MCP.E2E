@@ -65,9 +65,9 @@ public sealed class TaskEnvironments(
             return Answer.Failed<EnvironmentStatus>(read.Error!, read.Hint);
 
         use.Touch(copy.Environment);
-        await jobs.RaiseAsync(new EnvironmentPlan(copy.Environment, copy.Path, project.Manifest), cancellationToken);
+        var raised = await jobs.RaiseAsync(new EnvironmentPlan(copy.Environment, copy.Path, project.Manifest), cancellationToken);
 
-        return Answer.Ok(await WaitAsync(project, cancellationToken));
+        return Answer.Ok(await WaitAsync(project, raised, cancellationToken));
     }
 
     private async Task<Answer<EnvironmentStatus>> ReadStatusAsync(CancellationToken cancellationToken)
@@ -80,7 +80,7 @@ public sealed class TaskEnvironments(
         if (read.Value is not { } project)
             return Answer.Failed<EnvironmentStatus>(read.Error!, read.Hint);
 
-        return Answer.Ok(await LookAsync(project, cancellationToken));
+        return Answer.Ok(await LookAsync(project, RaiseMark.None, cancellationToken));
     }
 
     private async Task<Answer<bool>> StopAsync(CancellationToken cancellationToken)
@@ -143,6 +143,9 @@ public sealed class TaskEnvironments(
 
     private async Task<Answer<TestReport>> RunTestsAsync(CopyPlace copy, string? filter, CancellationToken cancellationToken)
     {
+        if (filter is not null && !ManifestRules.IsLiteral(filter))
+            return Answer.Failed<TestReport>(Messages.BadFilter(filter));
+
         var read = await RunningAsync(copy, cancellationToken);
         if (read.Value is not { } project)
             return Answer.Failed<TestReport>(read.Error!, read.Hint);
@@ -159,14 +162,14 @@ public sealed class TaskEnvironments(
         return Answer.Ok(new TestReport(outcome, counts, output, isCut, clock.GetElapsedTime(started).TotalSeconds));
     }
 
-    private async Task<EnvironmentStatus> WaitAsync(Project project, CancellationToken cancellationToken)
+    private async Task<EnvironmentStatus> WaitAsync(Project project, RaiseMark raised, CancellationToken cancellationToken)
     {
         long started = clock.GetTimestamp();
         var deadline = TimeSpan.FromSeconds(options.Value.StartSeconds);
 
         while (true)
         {
-            var status = await LookAsync(project, cancellationToken);
+            var status = await LookAsync(project, raised, cancellationToken);
             bool isSettled = status.State is not EnvironmentState.Starting;
 
             if (isSettled || clock.GetElapsedTime(started) >= deadline)
@@ -176,10 +179,11 @@ public sealed class TaskEnvironments(
         }
     }
 
-    private async Task<EnvironmentStatus> LookAsync(Project project, CancellationToken cancellationToken)
+    /// <summary>Where the environment stands: its health is asked only of an app that runs, since an app on its way out answers it too.</summary>
+    private async Task<EnvironmentStatus> LookAsync(Project project, RaiseMark since, CancellationToken cancellationToken)
     {
         var environment = project.Copy.Environment;
-        var run = await jobs.RunAsync(environment, cancellationToken);
+        var run = await jobs.RunAsync(environment, since, cancellationToken);
 
         if (run is null)
             return new EnvironmentStatus(environment.Value, EnvironmentState.Stopped, null, []);
@@ -194,6 +198,9 @@ public sealed class TaskEnvironments(
 
             return new EnvironmentStatus(environment.Value, EnvironmentState.Failed, app, run.Parts) { Output = output };
         }
+
+        if (run.App is not { State: "running" })
+            return new EnvironmentStatus(environment.Value, EnvironmentState.Starting, app, run.Parts);
 
         var health = new HttpCall("GET", project.Manifest.App.Health, null, "text/plain", []);
         var answer = await calls.SendAsync(AppOf(project), health, 0, cancellationToken);
@@ -215,7 +222,7 @@ public sealed class TaskEnvironments(
         if (read.Value is not { } project)
             return read;
 
-        if (await jobs.RunAsync(project.Copy.Environment, cancellationToken) is null)
+        if (await jobs.RunAsync(project.Copy.Environment, RaiseMark.None, cancellationToken) is null)
             return Answer.Failed<Project>(Messages.NotRaised, Messages.NotRaisedHint);
 
         use.Touch(project.Copy.Environment);

@@ -40,28 +40,18 @@ public static class ToolResponse
     /// <summary>
     /// A job as a tool result: the text is what the model reads — the tool's own answer once the job ended, or the job in
     /// flight with the resource it is read at — and the structured content is the job's report, which a client of
-    /// <c>Snail.Sdk.Mcp.JobClient</c> awaits.
+    /// <c>Snail.Sdk.Mcp.JobClient</c> awaits (<see cref="JobAnswer"/>).
     /// </summary>
-    public static CallToolResult From(JobReport report)
-    {
-        var job = JsonNode.Parse(report.ToJson())!.AsObject();
-        var said = Said(report, job);
+    public static CallToolResult From(JobReport report) => JobAnswer.Of(report, Said);
 
-        return new CallToolResult
-        {
-            IsError = said.IsError,
-            Content = said.Content,
-            StructuredContent = JsonSerializer.SerializeToElement(job, Options)
-        };
-    }
-
-    private static CallToolResult Said(JobReport report, JsonObject job)
+    private static CallToolResult Said(JobReport report)
     {
         if (report.State == JobState.Succeeded && report.Result is { } result && JsonObject.Create(result) is { } envelope)
             return From(envelope);
 
         if (report.State == JobState.Running)
         {
+            var job = JsonNode.Parse(report.ToJson())!.AsObject();
             job["note"] = Messages.JobRunning(report.Uri);
 
             return Success(job);

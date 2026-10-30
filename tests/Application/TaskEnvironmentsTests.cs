@@ -45,6 +45,19 @@ public sealed class TaskEnvironmentsTests
         Assert.Equal("mongo failed. pull access denied", answer.Value.Output);
     }
 
+    /// <summary>An app on its way out answers its health check too; only an app whose task runs is asked.</summary>
+    [Fact]
+    public async Task UpAsync_AppTaskNotRunningYet_IsStartingWithoutAskingItsHealth()
+    {
+        var stage = new Stage();
+        stage.Jobs.Run = new EnvironmentRun(null, []);
+
+        var answer = await stage.UpAsync();
+
+        Assert.Equal(EnvironmentState.Starting, answer.Value!.State);
+        Assert.Empty(stage.Calls.Sent);
+    }
+
     [Fact]
     public async Task UpAsync_AppSilentPastTheWait_IsStillStarting()
     {
@@ -150,6 +163,19 @@ public sealed class TaskEnvironmentsTests
         Assert.Equal(TestOutcome.Failed, answer.Value!.Outcome);
         Assert.Equal(["Shop.E2E.OrdersTests.Create"], answer.Value.Counts!.Failures);
         Assert.Equal("FullyQualifiedName~Orders", Assert.Single(stage.Jobs.Tested).Filter);
+    }
+
+    /// <summary>On its way to the run Nomad turned ${node.unique.id} in a filter into the node's id.</summary>
+    [Fact]
+    public async Task TestAsync_FilterThatSpellsAnInterpolation_IsRefusedBeforeAnyRun()
+    {
+        var stage = new Stage();
+        await stage.UpAsync();
+
+        var answer = await stage.TestAsync("FullyQualifiedName~${node.unique.id}");
+
+        Assert.Equal(Messages.BadFilter("FullyQualifiedName~${node.unique.id}"), answer.Error);
+        Assert.Empty(stage.Jobs.Tested);
     }
 
     [Fact]

@@ -14,6 +14,10 @@ namespace Snail.MCP.E2E.Tools;
 /// goes on whatever happens to the call.
 /// </para>
 /// <para>
+/// A job belongs to its task's environment: a session of another task does not read or watch it, whatever URI it is given
+/// (<c>WithJobs</c> in <c>EnvironmentServerExtensions</c> names the owner of a request by the copy its address names).
+/// </para>
+/// <para>
 /// One environment works on one thing at a time (<see cref="EnvironmentLeases"/>). A raise called while a raise is the
 /// newest thing in the line is that raise, and so is a test run: the caller waits on the job already there. Anything
 /// else takes its place in the line, and its job reports that it waits. A stop cancels them all.
@@ -54,7 +58,7 @@ public sealed class EnvironmentWork(TaskEnvironments environments, EnvironmentLe
                 return running;
 
             var lease = leases.Join(copy.Environment, kind);
-            var job = jobs.Start(kind, (progress, token) => WorkAsync(lease, copy, work, progress, token), E2EJson.Default.JsonObject);
+            var job = jobs.Start(kind, copy.Environment.Value, (progress, token) => WorkAsync(lease, copy, work, progress, token), E2EJson.Default.JsonObject);
             lease.Job = job.Uri;
 
             return job;

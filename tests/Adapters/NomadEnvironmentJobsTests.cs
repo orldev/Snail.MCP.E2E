@@ -55,11 +55,34 @@ public sealed class NomadEnvironmentJobsTests
         _nomad.Json("GET", $"/v1/job/{Job}", """{"ID":"e2e-0c2b9e1f","Name":"e2e-0c2b9e1f","Namespace":"default","Type":"service","Status":"running","StatusDescription":"","Version":1,"Stop":false,"SubmitTime":1,"TaskGroups":[]}""")
             .Json("GET", $"/v1/job/{Job}/allocations", Allocations);
 
-        var run = await Jobs().RunAsync(Environment, CancellationToken.None);
+        var run = await Jobs().RunAsync(Environment, RaiseMark.None, CancellationToken.None);
 
         Assert.Equal("a2", run!.Allocation);
         Assert.Equal(["app", "mongo"], run.Parts.Select(part => part.Name));
         Assert.Equal(1, run.App!.Restarts);
+    }
+
+    /// <summary>Right after a raise the old allocation still answers: a raise that counted it was ready with the app it replaced.</summary>
+    [Fact]
+    public async Task RunAsync_SinceARaise_CountsOnlyAllocationsNewerThanIt()
+    {
+        _nomad.Json("GET", $"/v1/job/{Job}", """{"ID":"e2e-0c2b9e1f","Name":"e2e-0c2b9e1f","Namespace":"default","Type":"service","Status":"running","StatusDescription":"","Version":1,"Stop":false,"SubmitTime":1,"TaskGroups":[]}""")
+            .Json("GET", $"/v1/job/{Job}/allocations", Allocations);
+
+        var run = await Jobs().RunAsync(Environment, new RaiseMark(["a2", "a1"]), CancellationToken.None);
+
+        Assert.Null(run!.Allocation);
+        Assert.Empty(run.Parts);
+    }
+
+    [Fact]
+    public async Task RaiseAsync_JobWithAllocations_AnswersThemAsEarlier()
+    {
+        Registering().Json("GET", $"/v1/job/{Job}/allocations", Allocations);
+
+        var mark = await Jobs().RaiseAsync(new EnvironmentPlan(Environment, Stage.Copy, Stage.Shop), CancellationToken.None);
+
+        Assert.Equal(["a2", "a1"], mark.Earlier);
     }
 
     [Fact]
@@ -67,7 +90,7 @@ public sealed class NomadEnvironmentJobsTests
     {
         _nomad.Down = new HttpRequestException("Connection refused");
 
-        await Assert.ThrowsAsync<SchedulerException>(() => Jobs().RunAsync(Environment, CancellationToken.None));
+        await Assert.ThrowsAsync<SchedulerException>(() => Jobs().RunAsync(Environment, RaiseMark.None, CancellationToken.None));
     }
 
     [Fact]
@@ -75,7 +98,7 @@ public sealed class NomadEnvironmentJobsTests
     {
         _nomad.Json("GET", $"/v1/job/{Job}", "no leader", HttpStatusCode.InternalServerError);
 
-        await Assert.ThrowsAsync<SchedulerException>(() => Jobs().RunAsync(Environment, CancellationToken.None));
+        await Assert.ThrowsAsync<SchedulerException>(() => Jobs().RunAsync(Environment, RaiseMark.None, CancellationToken.None));
     }
 
     [Fact]
@@ -84,7 +107,7 @@ public sealed class NomadEnvironmentJobsTests
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Jobs().RunAsync(Environment, cancelled.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Jobs().RunAsync(Environment, RaiseMark.None, cancelled.Token));
     }
 
     [Fact]
@@ -179,6 +202,22 @@ public sealed class NomadEnvironmentJobsTests
 
         Assert.EndsWith("Total: 3", output, StringComparison.Ordinal);
         Assert.StartsWith("warning: obsolete", output, StringComparison.Ordinal);
+    }
+
+    /// <summary>A node short of disk collected an ended run with its output before it was read: every passing run answered that it printed nothing.</summary>
+    [Fact]
+    public async Task TestAsync_RunThatSaysItEnded_IsReadWhileItsAllocationHoldsTheOutputAndThenStopped()
+    {
+        Registering()
+            .Json("GET", $"/v1/job/{Tests}/allocations", """[{"ID":"t1","Name":"x","JobID":"e2e-0c2b9e1f--tests","TaskGroup":"tests","NodeID":"n","ClientStatus":"running","DesiredStatus":"run","CreateTime":1}]""")
+            .Text("GET", "/v1/client/fs/logs/t1", "Passed!  - Failed: 0, Passed: 6, Skipped: 0, Total: 6\nS3L_TESTS_ENDED 0\n")
+            .Text("GET", "/v1/client/fs/logs/t1?stderr", string.Empty);
+
+        var run = await Jobs().TestAsync(Plan(), TimeSpan.FromMinutes(1), CancellationToken.None);
+
+        Assert.False(run.HasTimedOut);
+        Assert.Equal("Passed!  - Failed: 0, Passed: 6, Skipped: 0, Total: 6\n", run.Output);
+        Assert.Equal(("DELETE", $"/v1/job/{Tests}"), (_nomad.Sent[^1].Method, _nomad.Sent[^1].Path));
     }
 
     private static TestPlan Plan() => new(Environment, Stage.Copy, Stage.Shop, Stage.Shop.Tests!, null);

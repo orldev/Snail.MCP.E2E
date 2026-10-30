@@ -37,7 +37,7 @@ public static class Messages
     public const string NoTestsRan = "No test ran: the project holds none, or the filter matched none.";
 
     /// <summary>A test run that printed nothing at all.</summary>
-    public const string TestsSilent = "The test run printed nothing: it did not start. e2e_status shows the environment; read e2e_logs for tests.";
+    public const string TestsSilent = "The test run left no output to read: it did not start, or its node dropped the output before it was read. e2e_status shows the environment; read e2e_logs for tests.";
 
     /// <summary>The tests ran out of time.</summary>
     public const string TestsTimedOut = "The tests did not end in time and were stopped.";
@@ -76,6 +76,10 @@ public static class Messages
     /// <summary>A path that is not the app's.</summary>
     public static string BadPath(string path) =>
         $"\"{path}\" is not a path of the app: it starts with / and names no other host.";
+
+    /// <summary>A test filter Nomad would change on its way to the run.</summary>
+    public static string BadFilter(string filter) =>
+        $"The filter \"{filter}\" holds ${{…}}, which Nomad fills with the node's own values before the run sees it: write it without ${{.";
 
     /// <summary>Nomad did not answer.</summary>
     public static string SchedulerDown(string address, string reason) =>

@@ -30,10 +30,11 @@ namespace Snail.MCP.E2E.Adapters;
 /// environment over the ones given here.
 /// </para>
 /// <para>
-/// Nomad interpolates <c>${…}</c> in every string of a task's config and environment, so the shell's own <c>${…}</c> is
-/// written <c>$${…}</c>; unescaped, the test run failed validation before it started. Every value that comes from the
-/// manifest or the caller is escaped the same way: unescaped, <c>${attr.unique.hostname}</c> in a setting read the
-/// node's attributes, and a value that meant <c>${…}</c> literally arrived changed.
+/// Nomad interpolates <c>${…}</c> in every string of a task's config, so the shell's own <c>${…}</c> is written
+/// <c>$${…}</c>; unescaped, the test run failed validation before it started. A service's image and arguments from the
+/// manifest are escaped the same way. A task's environment has no such escape: on Nomad 1.10.5 <c>$${node.unique.id}</c>
+/// in a setting arrived as <c>$</c> and the node's id. So no setting and no test filter holding <c>${</c> reaches a job —
+/// <see cref="ManifestRules"/> refuses the one, the test run the other.
 /// </para>
 /// </remarks>
 public static class EnvironmentJob
@@ -43,6 +44,13 @@ public static class EnvironmentJob
 
     /// <summary>Where the task's copy and its packages are inside the allocation every task of the group shares.</summary>
     public const string AllocationFolder = "/alloc";
+
+    /// <summary>The line a test run prints when the tests have ended, before it waits to be stopped with its output kept.</summary>
+    public const string TestsEnded = "S3L_TESTS_ENDED";
+
+    /// <summary>How long a test run that ended waits for the server to read it and stop it.</summary>
+    /// <remarks>Long enough for a server that restarted to be up again; the sweep at its start stops the run.</remarks>
+    public const int HoldSeconds = 600;
 
     /// <summary>Nanoseconds in one second, the unit Nomad's API counts durations in.</summary>
     private const long Second = 1_000_000_000;
@@ -83,18 +91,26 @@ public static class EnvironmentJob
 
     private const string Test = $$"""
         {{Build}}
+        set +e
         timeout -k 10 "$S3L_TIMEOUT" dotnet test "$S3L_PROJECT" --nologo --logger "console;verbosity=normal" $${S3L_FILTER:+--filter "$S3L_FILTER"}
+        echo "{{TestsEnded}} $?"
+        exec sleep "$S3L_HOLD"
         """;
 
     /// <summary>The environment's job: a service job of one group, which Nomad restarts an app in twice before it gives up.</summary>
-    public static JsonObject Of(EnvironmentPlan plan, E2EOptions options)
+    /// <remarks>
+    /// Each raise carries a mark of its own in the preparing task, which makes it a change Nomad replaces the allocation
+    /// for. Without it a raise of the same copy registered the same job, Nomad kept the allocation running, and the app
+    /// went on serving the code it was built from before the caller changed it: the raise answered ready in no time.
+    /// </remarks>
+    public static JsonObject Of(EnvironmentPlan plan, string raise, E2EOptions options)
     {
         var manifest = plan.Manifest;
         var services = manifest.Services.Keys.ToList();
         JsonArray tasks = [.. manifest.Services.Select(service => ServiceTask(plan.Name, service.Key, service.Value, manifest.App, services, options))];
 
         tasks.Add(BuildTask(Parts.App, plan.Name, Run, AppEnv(plan, options), options));
-        tasks.Add(PrepareTask(plan.Name, plan.Copy, options));
+        tasks.Add(PrepareTask(plan.Name, plan.Copy, raise, options));
         tasks.Add(KeepTask(plan.Name, options));
 
         var job = new JsonObject
@@ -103,7 +119,7 @@ public static class EnvironmentJob
             ["Name"] = plan.Name.Value,
             ["Type"] = "service",
             ["Datacenters"] = new JsonArray(options.Datacenter),
-            ["Meta"] = new JsonObject { ["s3l.e2e.copy"] = plan.Copy },
+            ["Meta"] = new JsonObject { ["s3l.e2e.copy"] = plan.Copy, ["s3l.e2e.raise"] = raise },
             ["TaskGroups"] = new JsonArray(Group("environment", tasks, options, attempts: 2))
         };
 
@@ -129,6 +145,7 @@ public static class EnvironmentJob
             env["S3L_FILTER"] = filter;
 
         env["S3L_TIMEOUT"] = $"{options.TestSeconds}s";
+        env["S3L_HOLD"] = $"{HoldSeconds}";
 
         var job = new JsonObject
         {
@@ -137,7 +154,7 @@ public static class EnvironmentJob
             ["Type"] = "batch",
             ["Datacenters"] = new JsonArray(options.Datacenter),
             ["Meta"] = new JsonObject { ["s3l.e2e.copy"] = plan.Copy, ["s3l.e2e.run"] = run },
-            ["TaskGroups"] = new JsonArray(Group(Parts.Tests, [BuildTask(Parts.Tests, plan.Name, Test, env, options), PrepareTask(plan.Name, plan.Copy, options), KeepTask(plan.Name, options)], options, attempts: 0))
+            ["TaskGroups"] = new JsonArray(Group(Parts.Tests, [BuildTask(Parts.Tests, plan.Name, Test, env, options), PrepareTask(plan.Name, plan.Copy, run, options), KeepTask(plan.Name, options)], options, attempts: 0))
         };
 
         return job;
@@ -195,9 +212,10 @@ public static class EnvironmentJob
     };
 
     /// <summary>The server's own script before every other task: the task's copy and packages into the allocation.</summary>
-    private static JsonObject PrepareTask(TaskEnvironment name, string copy, E2EOptions options)
+    private static JsonObject PrepareTask(TaskEnvironment name, string copy, string mark, E2EOptions options)
     {
-        var task = ScriptTask(Parts.Prepare, "prestart", Prepare, new Dictionary<string, string>(StringComparer.Ordinal) { ["S3L_COPY"] = copy, ["S3L_TASK"] = name.Value }, options);
+        var env = new Dictionary<string, string>(StringComparer.Ordinal) { ["S3L_COPY"] = copy, ["S3L_TASK"] = name.Value, ["S3L_MARK"] = mark };
+        var task = ScriptTask(Parts.Prepare, "prestart", Prepare, env, options);
 
         task["VolumeMounts"] = new JsonArray(new JsonObject
         {
@@ -270,8 +288,8 @@ public static class EnvironmentJob
     }
 
     private static JsonObject Env(IReadOnlyDictionary<string, string> settings) =>
-        new([.. settings.Select(setting => KeyValuePair.Create(setting.Key, (JsonNode?)Literal(setting.Value)))]);
+        new([.. settings.Select(setting => KeyValuePair.Create(setting.Key, (JsonNode?)setting.Value))]);
 
-    /// <summary>The value as Nomad is to pass it on, with every <c>${</c> kept from its interpolation.</summary>
+    /// <summary>A string of a task's config as Nomad is to pass it on, with every <c>${</c> kept from its interpolation.</summary>
     private static string Literal(string value) => value.Replace("${", "$${", StringComparison.Ordinal);
 }

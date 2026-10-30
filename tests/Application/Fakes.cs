@@ -80,15 +80,17 @@ internal sealed class FakeJobs : IEnvironmentJobs
     /// <summary>What a raise and a test run wait for before they end: a test holds them in flight with it.</summary>
     public Task Hold { get; set; } = Task.CompletedTask;
 
-    public async Task RaiseAsync(EnvironmentPlan plan, CancellationToken cancellationToken)
+    public async Task<RaiseMark> RaiseAsync(EnvironmentPlan plan, CancellationToken cancellationToken)
     {
         Fail();
         Raised.Add(plan);
         await Hold.WaitAsync(cancellationToken);
         Run ??= new EnvironmentRun("a1", [new PartState("app", "running", 0, false), new PartState("mongo", "running", 0, false)]);
+
+        return RaiseMark.None;
     }
 
-    public Task<EnvironmentRun?> RunAsync(TaskEnvironment name, CancellationToken cancellationToken)
+    public Task<EnvironmentRun?> RunAsync(TaskEnvironment name, RaiseMark since, CancellationToken cancellationToken)
     {
         Fail();
 

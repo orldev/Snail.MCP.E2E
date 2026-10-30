@@ -28,7 +28,7 @@ public class EnvironmentBenchmarks
 
     /// <summary>The job of one environment, from its manifest.</summary>
     [Benchmark]
-    public JsonObject Job() => EnvironmentJob.Of(Plan, Options);
+    public JsonObject Job() => EnvironmentJob.Of(Plan, "r1", Options);
 
     /// <summary>The rules a manifest is judged by.</summary>
     [Benchmark]

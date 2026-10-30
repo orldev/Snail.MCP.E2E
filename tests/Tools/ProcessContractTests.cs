@@ -126,16 +126,28 @@ public sealed class ProcessContractTests : IAsyncLifetime
     public async Task CallJob_UpWithoutNomad_EndsWithTheAddressThatDidNotAnswer()
     {
         using var cancellation = new CancellationTokenSource(Timeout);
-        string copy = Path.Combine(_workspaces, "0c2b9e1f", "step-1");
-        Directory.CreateDirectory(Path.Combine(copy, ".snail"));
-        await File.WriteAllTextAsync(Path.Combine(copy, ".snail", "environment.json"), """{ "app": { "project": "src/Api/Api.csproj" } }""", cancellation.Token);
-        await using var session = await SessionAsync($"root={Uri.EscapeDataString(copy)}", cancellation.Token);
+        await using var session = await SessionAsync($"root={await CopyAsync("0c2b9e1f", cancellation.Token)}", cancellation.Token);
 
         var report = await session.CallJobAsync("e2e_up", cancellationToken: cancellation.Token);
 
         Assert.Equal(JobState.Succeeded, report.State);
         Assert.StartsWith("job://e2e/up/", report.Uri, StringComparison.Ordinal);
         Assert.Contains("did not answer", report.Result!.Value.GetRawText(), StringComparison.Ordinal);
+    }
+
+    /// <summary>One server serves every task of the platform: a session of another task does not read a task's job, whatever URI it holds.</summary>
+    [Fact]
+    public async Task ReadJob_OfAnotherTask_IsUnknownToItsSessions()
+    {
+        using var cancellation = new CancellationTokenSource(Timeout);
+        await using var owner = await SessionAsync($"root={await CopyAsync("0c2b9e1f", cancellation.Token)}", cancellation.Token);
+        await using var other = await SessionAsync($"root={await CopyAsync("4f1c", cancellation.Token)}", cancellation.Token);
+
+        var report = await owner.CallJobAsync("e2e_up", cancellationToken: cancellation.Token);
+        var read = await owner.ReadJobAsync(report.Uri, cancellation.Token);
+
+        Assert.Equal(report.Uri, read.Uri);
+        await Assert.ThrowsAnyAsync<Exception>(() => other.ReadJobAsync(report.Uri, cancellation.Token));
     }
 
     [Fact]
@@ -148,6 +160,16 @@ public sealed class ProcessContractTests : IAsyncLifetime
 
         Assert.True(result.IsError);
         Assert.Contains("'e2e_down' was not granted", result.Text(), StringComparison.Ordinal);
+    }
+
+    /// <summary>A step's copy of a task under the workspaces, with a manifest, as the address names it.</summary>
+    private async Task<string> CopyAsync(string task, CancellationToken cancellationToken)
+    {
+        string copy = Path.Combine(_workspaces, task, "step-1");
+        Directory.CreateDirectory(Path.Combine(copy, ".snail"));
+        await File.WriteAllTextAsync(Path.Combine(copy, ".snail", "environment.json"), """{ "app": { "project": "src/Api/Api.csproj" } }""", cancellationToken);
+
+        return Uri.EscapeDataString(copy);
     }
 
     private Task<McpClient> SessionAsync(string? query, CancellationToken cancellationToken) =>
