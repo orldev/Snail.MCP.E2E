@@ -31,10 +31,10 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
     public async Task<EnvironmentRun?> RunAsync(TaskEnvironment name, CancellationToken cancellationToken)
     {
         var job = await nomad.GetJobAsync(name.Value, cancellationToken);
-        if (job is null || job.Stop)
+        if (job is null || job.IsStopped)
             return null;
 
-        var allocation = Latest(await nomad.ListAllocationsAsync(name.Value, cancellationToken));
+        var allocation = Latest(await nomad.ListAllocationsAsync(name.Value, cancellationToken: cancellationToken));
         if (allocation is null)
             return new EnvironmentRun(null, []);
 
@@ -61,7 +61,7 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
     public async Task<string> LogsAsync(TaskEnvironment name, string part, bool isError, int bytes, CancellationToken cancellationToken)
     {
         string job = part == Parts.Tests ? name.Tests : name.Value;
-        var allocation = Latest(await nomad.ListAllocationsAsync(job, cancellationToken));
+        var allocation = Latest(await nomad.ListAllocationsAsync(job, cancellationToken: cancellationToken));
         if (allocation is null)
             return string.Empty;
 
@@ -87,7 +87,7 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
         while (!hasEnded && clock.GetElapsedTime(started) < timeout)
         {
             await Task.Delay(Poll, clock, cancellationToken);
-            var allocation = Latest(await nomad.ListAllocationsAsync(plan.Name.Tests, cancellationToken));
+            var allocation = Latest(await nomad.ListAllocationsAsync(plan.Name.Tests, cancellationToken: cancellationToken));
             hasEnded = allocation is not null && Ended.Contains(allocation.ClientStatus, StringComparer.Ordinal);
         }
 
@@ -103,9 +103,9 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
     /// <inheritdoc />
     public async Task<IReadOnlyList<TaskEnvironment>> ListAsync(CancellationToken cancellationToken)
     {
-        var jobs = await nomad.ListJobsAsync(TaskEnvironment.Prefix, cancellationToken);
+        var jobs = await nomad.ListJobsAsync(TaskEnvironment.Prefix, cancellationToken: cancellationToken);
 
-        return [.. jobs.Where(job => !job.Stop && TaskEnvironment.IsEnvironment(job.Id)).Select(job => new TaskEnvironment(job.Id))];
+        return [.. jobs.Items.Where(job => !job.IsStopped && TaskEnvironment.IsEnvironment(job.Id)).Select(job => new TaskEnvironment(job.Id))];
     }
 
     /// <inheritdoc />
@@ -124,6 +124,12 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
     }
 
     /// <summary>The allocation that stands for the job now: the newest one meant to run, or the newest of all once none is.</summary>
-    private static Allocation? Latest(IReadOnlyList<Allocation> allocations) =>
-        allocations.FirstOrDefault(allocation => string.Equals(allocation.DesiredStatus, "run", StringComparison.Ordinal)) ?? allocations.FirstOrDefault();
+    /// <remarks>Nomad lists allocations in its own order, so the newest is found by creation time.</remarks>
+    internal static Allocation? Latest(NomadPage<Allocation> allocations)
+    {
+        var newestFirst = allocations.Items.OrderByDescending(allocation => allocation.CreateTime).ToList();
+        var running = newestFirst.FirstOrDefault(allocation => string.Equals(allocation.DesiredStatus, "run", StringComparison.Ordinal));
+
+        return running ?? newestFirst.FirstOrDefault();
+    }
 }
