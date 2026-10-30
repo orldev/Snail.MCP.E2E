@@ -78,6 +78,40 @@ public sealed class EnvironmentWorkTests
     }
 
     [Fact]
+    public async Task TestAsync_SameFilterWhileOneRuns_WaitsOnTheSameJob()
+    {
+        await Work().RaiseAsync(60, CancellationToken.None);
+        _stage.Jobs.Hold = _release.Task;
+
+        var first = await Work().TestAsync("FullyQualifiedName~Orders", 0, CancellationToken.None);
+        var second = await Work().TestAsync("FullyQualifiedName~Orders", 0, CancellationToken.None);
+        _release.SetResult();
+        await EndOfAsync(first);
+
+        Assert.Equal(Report(first).Uri, Report(second).Uri);
+        Assert.Single(_stage.Jobs.Tested);
+    }
+
+    /// <summary>
+    /// A test run called while one ran used to join it whatever its filter: the model asked for the payment tests and was
+    /// answered with the order tests, as if it had got what it asked for.
+    /// </summary>
+    [Fact]
+    public async Task TestAsync_OtherFilterWhileOneRuns_RunsTheTestsItAskedForAfterIt()
+    {
+        await Work().RaiseAsync(60, CancellationToken.None);
+        _stage.Jobs.Hold = _release.Task;
+
+        var first = await Work().TestAsync("FullyQualifiedName~Orders", 0, CancellationToken.None);
+        var second = await Work().TestAsync("FullyQualifiedName~Payments", 0, CancellationToken.None);
+        _release.SetResult();
+        await EndOfAsync(second);
+
+        Assert.NotEqual(Report(first).Uri, Report(second).Uri);
+        Assert.Equal(["FullyQualifiedName~Orders", "FullyQualifiedName~Payments"], _stage.Jobs.Tested.Select(plan => plan.Filter));
+    }
+
+    [Fact]
     public async Task DownAsync_WhileARaiseRuns_CancelsItAndItsJobSaysSo()
     {
         _stage.Jobs.Hold = _release.Task;

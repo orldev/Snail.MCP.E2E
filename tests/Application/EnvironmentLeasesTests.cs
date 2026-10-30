@@ -84,4 +84,43 @@ public sealed class EnvironmentLeasesTests
 
         only.Cancel();
     }
+
+    /// <summary>A thousand raises, test runs and stops on one environment from every thread: never two at work at once, and nothing left in line.</summary>
+    [Fact]
+    public async Task Join_ThousandHoldersInParallel_WorkOneAtATimeAndLeaveTheLineEmpty()
+    {
+        string[] kinds = [LeaseKinds.Up, LeaseKinds.Test, LeaseKinds.Down];
+        int working = 0;
+        int most = 0;
+
+        await Parallel.ForAsync(0, 1000, async (index, token) =>
+        {
+            var lease = _leases.Join(Shop, kinds[index % kinds.Length]);
+            try
+            {
+                await lease.TurnAsync(token);
+                int now = Interlocked.Increment(ref working);
+                InterlockedMax(ref most, now);
+                await Task.Yield();
+                Interlocked.Decrement(ref working);
+            }
+            finally
+            {
+                _leases.Release(lease);
+            }
+        });
+
+        Assert.Equal(1, most);
+        Assert.False(_leases.IsBusy(Shop));
+    }
+
+    private static void InterlockedMax(ref int target, int value)
+    {
+        int seen;
+        do
+        {
+            seen = Volatile.Read(ref target);
+        }
+        while (value > seen && Interlocked.CompareExchange(ref target, value, seen) != seen);
+    }
 }

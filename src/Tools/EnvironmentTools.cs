@@ -38,8 +38,14 @@ public sealed class EnvironmentTools(TaskEnvironments environments, EnvironmentW
         [Description(ToolDescriptions.HttpBody)] string? body = null,
         [Description(ToolDescriptions.HttpContentType)] string? contentType = null,
         [Description(ToolDescriptions.HttpHeaders)] string[]? headers = null,
-        CancellationToken cancellationToken = default) =>
-        ToolResponse.From(await environments.CallAsync(Calls.Of(method, path, body, contentType, headers), cancellationToken));
+        CancellationToken cancellationToken = default)
+    {
+        var call = Calls.Of(method, path, body, contentType, headers);
+        if (call.Value is not { } request)
+            return ToolResponse.Failure(call.Error!, call.Hint);
+
+        return ToolResponse.From(await environments.CallAsync(request, cancellationToken));
+    }
 
     /// <summary>Reads the end of a part's output.</summary>
     [McpServerTool(Name = "e2e_logs", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]

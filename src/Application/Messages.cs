@@ -73,6 +73,14 @@ public static class Messages
     public static string BadMethod(string method) =>
         $"\"{method}\" is not a method this tool sends: GET, POST, PUT, PATCH, DELETE or HEAD.";
 
+    /// <summary>A body type that is no media type.</summary>
+    public static string BadContentType(string type) =>
+        $"\"{type}\" is not a media type: write it as type/subtype, such as application/json or text/plain; charset=utf-8.";
+
+    /// <summary>A header the request cannot carry.</summary>
+    public static string BadHeader(string header) =>
+        $"\"{header}\" is not a header this tool can send: write it as \"Name: value\", a name of letters, digits and dashes; a content header such as Content-Language goes only with a body.";
+
     /// <summary>A path that is not the app's.</summary>
     public static string BadPath(string path) =>
         $"\"{path}\" is not a path of the app: it starts with / and names no other host.";
@@ -105,5 +113,5 @@ public static class Messages
 
     /// <summary>Where the result of a job still running will be.</summary>
     public static string JobRunning(string job) =>
-        $"Still running. Its result will be in the resource {job}: read it when you need the result. Calling the same tool again while it runs waits on this job rather than starting another.";
+        $"Still running. Its result will be in the resource {job}: read it when you need the result. Calling the same tool again while it runs — e2e_test with the same filter — waits on this job rather than starting another.";
 }

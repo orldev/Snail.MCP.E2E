@@ -107,6 +107,9 @@ public sealed class Lease : IDisposable
     /// <summary>The job the work is read at, once it runs as one.</summary>
     public string? Job { get; set; }
 
+    /// <summary>What the caller asked of the work beyond its kind — a test run's filter — so a call asking otherwise does not join it.</summary>
+    public string? Asked { get; set; }
+
     /// <summary>Cancelled when somebody stops the environment.</summary>
     public CancellationToken Stopping => _cancelling.Token;
 

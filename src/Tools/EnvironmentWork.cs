@@ -19,8 +19,9 @@ namespace Snail.MCP.E2E.Tools;
 /// </para>
 /// <para>
 /// One environment works on one thing at a time (<see cref="EnvironmentLeases"/>). A raise called while a raise is the
-/// newest thing in the line is that raise, and so is a test run: the caller waits on the job already there. Anything
-/// else takes its place in the line, and its job reports that it waits. A stop cancels them all.
+/// newest thing in the line is that raise, and so is a test run with the same filter: the caller waits on the job
+/// already there. Anything else — a test run with another filter among them — takes its place in the line, and its
+/// job reports that it waits. A stop cancels them all.
 /// </para>
 /// </remarks>
 public sealed class EnvironmentWork(TaskEnvironments environments, EnvironmentLeases leases, Jobs jobs)
@@ -32,38 +33,42 @@ public sealed class EnvironmentWork(TaskEnvironments environments, EnvironmentLe
 
     /// <summary>Raises the environment as a job and answers within the wait.</summary>
     public Task<CallToolResult> RaiseAsync(int wait, CancellationToken cancellationToken) =>
-        RunAsync(LeaseKinds.Up, async (copy, token) => ToolResponse.Envelope(await environments.UpAsync(copy, token)), wait, cancellationToken);
+        RunAsync(LeaseKinds.Up, null, async (copy, token) => ToolResponse.Envelope(await environments.UpAsync(copy, token)), wait, cancellationToken);
 
     /// <summary>Runs the end-to-end tests as a job and answers within the wait.</summary>
     public Task<CallToolResult> TestAsync(string? filter, int wait, CancellationToken cancellationToken) =>
-        RunAsync(LeaseKinds.Test, async (copy, token) => ToolResponse.Envelope(await environments.TestAsync(copy, filter, token)), wait, cancellationToken);
+        RunAsync(LeaseKinds.Test, filter, async (copy, token) => ToolResponse.Envelope(await environments.TestAsync(copy, filter, token)), wait, cancellationToken);
 
-    private async Task<CallToolResult> RunAsync(string kind, Func<CopyPlace, CancellationToken, Task<JsonObject>> work, int wait, CancellationToken cancellationToken)
+    private async Task<CallToolResult> RunAsync(string kind, string? asked, Func<CopyPlace, CancellationToken, Task<JsonObject>> work, int wait, CancellationToken cancellationToken)
     {
         var place = environments.Session();
         if (place.Value is not { } copy)
             return ToolResponse.Failure(place.Error!, place.Hint);
 
-        var job = Start(copy, kind, work);
+        var job = Start(copy, kind, asked, work);
         var report = await job.ForAsync(TimeSpan.FromSeconds(Math.Clamp(wait, 0, MaxWaitSeconds)), cancellationToken);
 
         return ToolResponse.From(report);
     }
 
-    private Job Start(CopyPlace copy, string kind, Func<CopyPlace, CancellationToken, Task<JsonObject>> work)
+    private Job Start(CopyPlace copy, string kind, string? asked, Func<CopyPlace, CancellationToken, Task<JsonObject>> work)
     {
         lock (_gate)
         {
-            if (leases.Last(copy.Environment) is { Job: { } uri } last && last.Kind == kind && jobs.Find(uri) is { Report.IsRunning: true } running)
+            if (leases.Last(copy.Environment) is { Job: { } uri } last && IsSame(last, kind, asked) && jobs.Find(uri) is { Report.IsRunning: true } running)
                 return running;
 
             var lease = leases.Join(copy.Environment, kind);
+            lease.Asked = asked;
             var job = jobs.Start(kind, copy.Environment.Value, (progress, token) => WorkAsync(lease, copy, work, progress, token), E2EJson.Default.JsonObject);
             lease.Job = job.Uri;
 
             return job;
         }
     }
+
+    private static bool IsSame(Lease lease, string kind, string? asked) =>
+        lease.Kind == kind && string.Equals(lease.Asked ?? string.Empty, asked ?? string.Empty, StringComparison.Ordinal);
 
     private async Task<JsonObject> WorkAsync(Lease lease, CopyPlace copy, Func<CopyPlace, CancellationToken, Task<JsonObject>> work, IProgress<JobProgress> progress, CancellationToken cancellationToken)
     {
