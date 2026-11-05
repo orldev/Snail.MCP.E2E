@@ -1,10 +1,7 @@
 # The server as a container image, built by .github/workflows/image.yml through the shared mcp-image.yml and pushed
 # from a version tag as ghcr.io/<owner>/s3l-e2e-mcp.
 #
-#   docker build --build-context feed=../../nuget -t s3l-e2e-mcp:local .
-#
-# Snail.Sdk is taken from the author's local feed until the version global.json asks for is on nuget.org: the build
-# takes it as a build context named feed, and restore finds it under the name nuget.config maps Snail.Sdk to.
+#   docker build -t s3l-e2e-mcp:local .
 #
 # The server listens on every interface at 8828 for the platform's workers (McpHttpHost.CreateContainerBuilder, on the
 # port of SNAIL_MCP_E2E_PORT: the published port is the boundary, and a browser's request is still refused), and its
@@ -27,8 +24,6 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends clang zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /source
-COPY --from=feed . /feed
-RUN dotnet nuget add source /feed --name LocalPackages
 COPY . .
 RUN case "$TARGETARCH" in amd64|"") rid=linux-x64 ;; *) rid="linux-$TARGETARCH" ;; esac \
     && dotnet publish src/Snail.MCP.E2E.csproj -c Release -r "$rid" -o /app -p:Version=$VERSION

@@ -248,14 +248,6 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
         return [.. jobs.Items.Where(job => !job.IsStopped && TaskEnvironment.IsEnvironment(job.Id)).Select(job => new TaskEnvironment(job.Id))];
     }
 
-    private static Task AskAsync(Func<Task> call, CancellationToken cancellationToken) =>
-        AskAsync(async () =>
-        {
-            await call();
-
-            return true;
-        }, cancellationToken);
-
     private static async Task<T> AskAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken)
     {
         try
