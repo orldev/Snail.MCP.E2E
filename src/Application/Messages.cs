@@ -108,9 +108,6 @@ public static class Messages
     /// <summary>A raise or a test run that e2e_down stopped.</summary>
     public const string StoppedByDown = "The environment was stopped with e2e_down before this ended.";
 
-    /// <summary>A job the server cancelled, as it does when it stops.</summary>
-    public const string JobCancelled = "The work was cancelled: the server stopped before it ended.";
-
     /// <summary>Where the result of a job still running will be.</summary>
     public static string JobRunning(string job) =>
         $"Still running. Its result will be in the resource {job}: read it when you need the result. Calling the same tool again while it runs — e2e_test with the same filter — waits on this job rather than starting another.";

@@ -16,11 +16,7 @@ public sealed class EnvironmentWorkTests
 
     private EnvironmentWork Work(string? root = Stage.Copy) => new(_stage.Environments(root), _stage.Leases, _jobs);
 
-    private static string Text(CallToolResult result) => ((TextContentBlock)result.Content[0]).Text;
-
-    private static JobReport Report(CallToolResult result) => JobReport.FromJson(result.StructuredContent!.Value.GetRawText())!;
-
-    private async Task<JobReport> EndOfAsync(CallToolResult result) => await _jobs.Find(Report(result).Uri)!.Completion.WaitAsync(Patience);
+    private async Task<JobReport> EndOfAsync(CallToolResult result) => await _jobs.Find(result.Report()!.Uri)!.Completion.WaitAsync(Patience);
 
     [Fact]
     public async Task RaiseAsync_AppAnswersWithinTheWait_AnswersAsTheToolAlwaysDid()
@@ -28,8 +24,8 @@ public sealed class EnvironmentWorkTests
         var result = await Work().RaiseAsync(60, CancellationToken.None);
 
         Assert.NotEqual(true, result.IsError);
-        Assert.StartsWith("""{"ok":true,"data":{"environment":"e2e-0c2b9e1f","state":"ready""", Text(result), StringComparison.Ordinal);
-        Assert.Equal(JobState.Succeeded, Report(result).State);
+        Assert.StartsWith("""{"ok":true,"data":{"environment":"e2e-0c2b9e1f","state":"ready""", result.Text(), StringComparison.Ordinal);
+        Assert.Equal(JobState.Succeeded, result.Report()!.State);
     }
 
     [Fact]
@@ -40,8 +36,8 @@ public sealed class EnvironmentWorkTests
         var result = await Work().RaiseAsync(0, CancellationToken.None);
 
         Assert.NotEqual(true, result.IsError);
-        Assert.StartsWith("job://e2e/up/", Report(result).Uri, StringComparison.Ordinal);
-        Assert.Contains(Report(result).Uri, Text(result), StringComparison.Ordinal);
+        Assert.StartsWith("job://e2e/up/", result.Report()!.Uri, StringComparison.Ordinal);
+        Assert.Contains(result.Report()!.Uri, result.Text(), StringComparison.Ordinal);
         _release.SetResult();
     }
 
@@ -56,7 +52,7 @@ public sealed class EnvironmentWorkTests
         _release.SetResult();
         await EndOfAsync(first);
 
-        Assert.Equal(Report(first).Uri, Report(second).Uri);
+        Assert.Equal(first.Report()!.Uri, second.Report()!.Uri);
         Assert.Single(_stage.Jobs.Raised);
     }
 
@@ -88,7 +84,7 @@ public sealed class EnvironmentWorkTests
         _release.SetResult();
         await EndOfAsync(first);
 
-        Assert.Equal(Report(first).Uri, Report(second).Uri);
+        Assert.Equal(first.Report()!.Uri, second.Report()!.Uri);
         Assert.Single(_stage.Jobs.Tested);
     }
 
@@ -107,7 +103,7 @@ public sealed class EnvironmentWorkTests
         _release.SetResult();
         await EndOfAsync(second);
 
-        Assert.NotEqual(Report(first).Uri, Report(second).Uri);
+        Assert.NotEqual(first.Report()!.Uri, second.Report()!.Uri);
         Assert.Equal(["FullyQualifiedName~Orders", "FullyQualifiedName~Payments"], _stage.Jobs.Tested.Select(plan => plan.Filter));
     }
 
@@ -121,7 +117,9 @@ public sealed class EnvironmentWorkTests
         var ended = await EndOfAsync(raise);
 
         Assert.True(down.Error is null);
-        Assert.Contains(Messages.StoppedByDown, ended.Result!.Value.GetRawText(), StringComparison.Ordinal);
+        Assert.Equal(JobState.Failed, ended.State);
+        Assert.Equal(Messages.StoppedByDown, ended.Message);
+        Assert.Equal(Messages.NotRaisedHint, ended.Hint);
         Assert.False(_stage.Leases.IsBusy(TaskEnvironment.Of("0c2b9e1f")!.Value));
     }
 
@@ -131,7 +129,55 @@ public sealed class EnvironmentWorkTests
         var result = await Work(root: null).RaiseAsync(60, CancellationToken.None);
 
         Assert.True(result.IsError);
-        Assert.Contains("?root=", Text(result), StringComparison.Ordinal);
+        Assert.Contains("?root=", result.Text(), StringComparison.Ordinal);
         Assert.False(result.StructuredContent?.TryGetProperty("uri", out _) ?? false);
+    }
+
+    /// <summary>
+    /// A raise that ended within the wait without an environment answers as its tool fails — error, hint, flagged — and its
+    /// job ended failed with the same words: it used to end succeeded with the failure's envelope as its result, read as
+    /// work done by a client that reads the job alone.
+    /// </summary>
+    [Fact]
+    public async Task RaiseAsync_CopyWithoutAManifest_AnswersTheFailureTheJobEndedWith()
+    {
+        _stage.Manifest = null;
+
+        var result = await Work().RaiseAsync(60, CancellationToken.None);
+        var report = result.Report()!;
+
+        Assert.True(result.IsError);
+        Assert.False(result.IsOk());
+        Assert.Equal(Messages.NoManifest(".snail/environment.json"), result.Error());
+        Assert.Equal(Messages.NoManifestHint, result.Hint());
+        Assert.Equal(JobState.Failed, report.State);
+        Assert.Equal(Messages.NoManifest(".snail/environment.json"), report.Message);
+        Assert.Equal(Messages.NoManifestHint, report.Hint);
+    }
+
+    /// <summary>A job belongs to the task the copy's first folder names, the owner <c>JobOwners.TaskOfCopy</c> gives every session of that task.</summary>
+    [Fact]
+    public async Task RaiseAsync_SessionAtATaskCopy_StartsAJobOwnedByTheTask()
+    {
+        var result = await Work().RaiseAsync(60, CancellationToken.None);
+
+        Assert.Equal("0c2b9e1f", _jobs.Find(result.Report()!.Uri)!.Owner);
+    }
+
+    /// <summary>A job cancelled within the wait — the server stopping — answers as a failure that says what raises the environment again.</summary>
+    [Fact]
+    public async Task RaiseAsync_JobCancelledWithinTheWait_IsAFailureWithTheHintToRaiseAgain()
+    {
+        _stage.Jobs.Hold = _release.Task;
+        var first = await Work().RaiseAsync(0, CancellationToken.None);
+        var waiting = Work().RaiseAsync(60, CancellationToken.None);
+
+        _jobs.Find(first.Report()!.Uri)!.Cancel();
+        var result = await waiting.WaitAsync(Patience);
+
+        Assert.True(result.IsError);
+        Assert.Equal("cancelled", result.Type());
+        Assert.Equal(Messages.NotRaisedHint, result.Hint());
+        Assert.Equal(JobState.Cancelled, result.Report()!.State);
     }
 }

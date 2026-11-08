@@ -46,7 +46,9 @@ default to 8080 and `/health`; comments and trailing commas are allowed. Snail.S
 - Everything sits on one internal Docker network. The way out is the server's proxy, which lets through NuGet's hosts
   only, with limits of its own: 256 connections, 10 s for a request head, 2 minutes of silence.
 - `e2e_up` and `e2e_test` run as jobs: the call answers within its `wait` (60 s unless asked otherwise) with the result,
-  or with the job's `job://e2e/…` resource, whose text holds the result once it ends. One environment does one thing
+  or with the job's `job://e2e/…` resource, whose text holds the result once it ends. A raise or a test run that could
+  not happen — no manifest, no Nomad, stopped by `e2e_down` — answers `ok: false` with its error and hint, and its job
+  ends failed with the same words. One environment does one thing
   at a time: the same call while it runs — a test run with the same filter — waits on the same job, another waits its
   turn, `e2e_down` cancels them. A job of one task is unknown to the sessions of another; the last twenty ended jobs of
   each task stay readable.
@@ -55,8 +57,9 @@ default to 8080 and `/health`; comments and trailing commas are allowed. Snail.S
 - An environment nobody called for 60 minutes is stopped, unless a raise or test run is at work on it.
 - The manifest is read only from a file of the copy itself: a link, or anything but a regular file, is refused.
 - The server is native (Native AOT) on `runtime-deps`: it answers its health check about 40 ms after it starts and
-  holds about 40 MB, against 130 ms and 100 MB framework-dependent. It listens on every interface of its container,
-  and refuses a request a browser makes (one with `Origin`) with 403.
+  holds about 40 MB, against 130 ms and 100 MB framework-dependent. It listens on every interface by design — in its
+  container, and under launchd too, since the platform's workers reach it from elsewhere — and refuses a request a
+  browser makes (one with `Origin`) with 403.
 
 ## Running it
 
@@ -70,7 +73,8 @@ the server stands beside the MCP kit: `SWARM_ENVIRONMENTS=1 sh deploy/stand.sh u
 
 | Setting | Default | |
 | --- | --- | --- |
-| `SNAIL_MCP_E2E_PORT` | `8828` | port of the MCP endpoint and of `/healthz` |
+| `SNAIL_MCP_E2E_PORT` | `8828` | port of the MCP endpoint and of `/healthz`, on every interface |
+| `SNAIL_MCP_E2E_URL` | `http://0.0.0.0:8828/` | the whole address instead: `http://127.0.0.1:8828/` keeps the server to loopback |
 | `SNAIL_MCP_E2E_NOMAD_ADDRESS` | `http://nomad:4646` | Nomad's API |
 | `SNAIL_MCP_E2E_NETWORK` | `s3l-e2e` | internal Docker network of the environments; the server joins it too |
 | `SNAIL_MCP_E2E_WORKSPACES_ROOT` | `/workspaces` | working copies as the server sees them, and where environments mount them |

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using Snail.MCP.E2E.Configuration;
+using Snail.Sdk.Mcp.Hosting.Sessions;
 
 namespace Snail.MCP.E2E.Application;
 
@@ -7,41 +8,31 @@ namespace Snail.MCP.E2E.Application;
 /// <remarks>
 /// The platform names a step's copy in the address — <c>/mcp?root=/workspaces/&lt;task&gt;/step-3</c> — the same way it
 /// does for its file, git and Roslyn servers, and passes nothing else about the task. The task is the copy's first folder
-/// under the workspaces root: every step of a task lands in the same environment. A copy outside the root is refused,
-/// whatever the address says, because the environment mounts it from a volume that holds nothing else.
+/// under the workspaces root (<see cref="WorkspaceCopy"/>): every step of a task lands in the same environment. A copy
+/// outside the root is refused, whatever the address says, because the environment mounts it from a volume that holds
+/// nothing else.
 /// </remarks>
-public sealed class SessionCopy(IHttpContextAccessor requests, IOptions<E2EOptions> options)
+public sealed class SessionCopy(ISessionAddress address, IOptions<E2EOptions> options)
 {
     /// <summary>What the address calls the working copy.</summary>
-    public const string Parameter = "root";
+    public const string Parameter = SessionRoots.Parameter;
 
     /// <summary>The copy and its task's environment, or why this session has none.</summary>
-    public Answer<CopyPlace> Current()
+    public Answer<WorkspacePlace<TaskEnvironment>> Current()
     {
-        string? root = requests.HttpContext?.Request.Query[Parameter].FirstOrDefault();
+        string? root = address.Values(Parameter).FirstOrDefault();
 
         return Of(root, options.Value.WorkspacesRoot);
     }
 
-    /// <summary>The copy a root names under the workspaces folder, or why it names none.</summary>
-    public static Answer<CopyPlace> Of(string? root, string workspaces)
+    /// <summary>The copy a root names under the workspaces folder, or why it names none, in this server's words.</summary>
+    /// <remarks>The refusal is typed by the SDK's reason — <c>noRoot</c>, <c>outside</c>, <c>malformed</c>, <c>notATask</c> — so a program tells a missing copy from a wrong one.</remarks>
+    public static Answer<WorkspacePlace<TaskEnvironment>> Of(string? root, string workspaces)
     {
-        if (string.IsNullOrWhiteSpace(root))
-            return Answer.Failed<CopyPlace>(Messages.NoCopy, Messages.NoCopyHint);
+        var copy = WorkspaceCopy.Of(root, workspaces, TaskEnvironment.Of);
 
-        string under = workspaces.TrimEnd('/');
-        string relative = root.StartsWith($"{under}/", StringComparison.Ordinal) ? root[(under.Length + 1)..].Trim('/') : string.Empty;
-        string[] segments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
-
-        if (segments.Length == 0 || segments.Any(segment => segment is "." or ".."))
-            return Answer.Failed<CopyPlace>(Messages.CopyOutside(root, workspaces));
-
-        if (TaskEnvironment.Of(segments[0]) is not { } name)
-            return Answer.Failed<CopyPlace>(Messages.CopyOutside(root, workspaces));
-
-        return Answer.Ok(new CopyPlace(name, $"{under}/{string.Join('/', segments)}"));
+        return copy.ToAnswer(refusal => refusal == CopyRefusal.NoRoot
+            ? Answer.Failed(Messages.NoCopy, Messages.NoCopyHint)
+            : Answer.Failed(Messages.CopyOutside(root ?? string.Empty, workspaces)));
     }
 }
-
-/// <summary>A working copy as a path under the workspaces root, and the environment of its task.</summary>
-public sealed record CopyPlace(TaskEnvironment Environment, string Path);

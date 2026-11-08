@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using Snail.MCP.E2E.Application.Ports;
 using Snail.MCP.E2E.Configuration;
+using Snail.Sdk.Mcp.Hosting.Sessions;
 
 namespace Snail.MCP.E2E.Application;
 
@@ -32,10 +33,10 @@ public sealed class TaskEnvironments(
     private static readonly string[] Methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 
     /// <summary>The working copy this session works on, and its task's environment, or why it has none.</summary>
-    public Answer<CopyPlace> Session() => session.Current();
+    public Answer<WorkspacePlace<TaskEnvironment>> Session() => session.Current();
 
     /// <summary>Raises the environment from the copy, or replaces the one running, and waits until the app answers its health check.</summary>
-    public Task<Answer<EnvironmentStatus>> UpAsync(CopyPlace copy, CancellationToken cancellationToken) =>
+    public Task<Answer<EnvironmentStatus>> UpAsync(WorkspacePlace<TaskEnvironment> copy, CancellationToken cancellationToken) =>
         GuardAsync(() => RaiseAsync(copy, cancellationToken));
 
     /// <summary>Where the environment stands now, without waiting.</summary>
@@ -55,17 +56,17 @@ public sealed class TaskEnvironments(
         GuardAsync(() => ReadLogsAsync(part, bytes, cancellationToken));
 
     /// <summary>Runs the project's end-to-end tests against the running app and reads back how they went.</summary>
-    public Task<Answer<TestReport>> TestAsync(CopyPlace copy, string? filter, CancellationToken cancellationToken) =>
+    public Task<Answer<TestReport>> TestAsync(WorkspacePlace<TaskEnvironment> copy, string? filter, CancellationToken cancellationToken) =>
         GuardAsync(() => RunTestsAsync(copy, filter, cancellationToken));
 
-    private async Task<Answer<EnvironmentStatus>> RaiseAsync(CopyPlace copy, CancellationToken cancellationToken)
+    private async Task<Answer<EnvironmentStatus>> RaiseAsync(WorkspacePlace<TaskEnvironment> copy, CancellationToken cancellationToken)
     {
         var read = await ProjectAsync(copy, cancellationToken);
         if (read.Value is not { } project)
             return Answer.Failed<EnvironmentStatus>(read.Error!, read.Hint);
 
-        use.Touch(copy.Environment);
-        var raised = await jobs.RaiseAsync(new EnvironmentPlan(copy.Environment, copy.Path, project.Manifest), cancellationToken);
+        use.Touch(copy.Task);
+        var raised = await jobs.RaiseAsync(new EnvironmentPlan(copy.Task, copy.Path, project.Manifest), cancellationToken);
 
         return Answer.Ok(await WaitAsync(project, raised, cancellationToken));
     }
@@ -89,14 +90,14 @@ public sealed class TaskEnvironments(
         if (place.Value is not { } copy)
             return Answer.Failed<bool>(place.Error!, place.Hint);
 
-        leases.CancelAll(copy.Environment);
-        var lease = leases.Join(copy.Environment, LeaseKinds.Down);
+        leases.CancelAll(copy.Task);
+        var lease = leases.Join(copy.Task, LeaseKinds.Down);
 
         try
         {
             await lease.TurnAsync(cancellationToken);
-            bool hadRun = await jobs.HasStoppedAsync(copy.Environment, cancellationToken);
-            use.Forget(copy.Environment);
+            bool hadRun = await jobs.HasStoppedAsync(copy.Task, cancellationToken);
+            use.Forget(copy.Task);
 
             return Answer.Ok(hadRun);
         }
@@ -134,14 +135,14 @@ public sealed class TaskEnvironments(
             return Answer.Failed<LogTail>(Messages.UnknownPart(part, parts));
 
         int wanted = Math.Clamp(bytes ?? options.Value.DefaultLogBytes, 1, options.Value.MaxLogBytes);
-        var environment = project.Copy.Environment;
+        var environment = project.Copy.Task;
         string stdout = await jobs.LogsAsync(environment, part, false, wanted, cancellationToken);
         string stderr = await jobs.LogsAsync(environment, part, true, wanted, cancellationToken);
 
         return Answer.Ok(new LogTail(part, stdout, stderr));
     }
 
-    private async Task<Answer<TestReport>> RunTestsAsync(CopyPlace copy, string? filter, CancellationToken cancellationToken)
+    private async Task<Answer<TestReport>> RunTestsAsync(WorkspacePlace<TaskEnvironment> copy, string? filter, CancellationToken cancellationToken)
     {
         if (filter is not null && !ManifestRules.IsLiteral(filter))
             return Answer.Failed<TestReport>(Messages.BadFilter(filter));
@@ -154,7 +155,7 @@ public sealed class TaskEnvironments(
             return Answer.Failed<TestReport>(Messages.NoTests, Messages.NoManifestHint);
 
         long started = clock.GetTimestamp();
-        var plan = new TestPlan(copy.Environment, copy.Path, project.Manifest, tests, string.IsNullOrWhiteSpace(filter) ? null : filter.Trim());
+        var plan = new TestPlan(copy.Task, copy.Path, project.Manifest, tests, string.IsNullOrWhiteSpace(filter) ? null : filter.Trim());
         var run = await jobs.TestAsync(plan, TimeSpan.FromSeconds(options.Value.TestSeconds), cancellationToken);
         var (outcome, counts) = run.HasTimedOut ? (TestOutcome.TimedOut, null) : TestSummary.Of(run.Output);
         var (output, isCut) = Tail(run.Output.Length > 0 ? run.Output : Messages.TestsSilent, options.Value.TestOutputBytes);
@@ -182,7 +183,7 @@ public sealed class TaskEnvironments(
     /// <summary>Where the environment stands: its health is asked only of an app that runs, since an app on its way out answers it too.</summary>
     private async Task<EnvironmentStatus> LookAsync(Project project, RaiseMark since, CancellationToken cancellationToken)
     {
-        var environment = project.Copy.Environment;
+        var environment = project.Copy.Task;
         var run = await jobs.RunAsync(environment, since, cancellationToken);
 
         if (run is null)
@@ -216,21 +217,21 @@ public sealed class TaskEnvironments(
         return place.Value is { } copy ? await RunningAsync(copy, cancellationToken) : Answer.Failed<Project>(place.Error!, place.Hint);
     }
 
-    private async Task<Answer<Project>> RunningAsync(CopyPlace copy, CancellationToken cancellationToken)
+    private async Task<Answer<Project>> RunningAsync(WorkspacePlace<TaskEnvironment> copy, CancellationToken cancellationToken)
     {
         var read = await ProjectAsync(copy, cancellationToken);
         if (read.Value is not { } project)
             return read;
 
-        if (await jobs.RunAsync(project.Copy.Environment, RaiseMark.None, cancellationToken) is null)
+        if (await jobs.RunAsync(project.Copy.Task, RaiseMark.None, cancellationToken) is null)
             return Answer.Failed<Project>(Messages.NotRaised, Messages.NotRaisedHint);
 
-        use.Touch(project.Copy.Environment);
+        use.Touch(project.Copy.Task);
 
         return read;
     }
 
-    private async Task<Answer<Project>> ProjectAsync(CopyPlace copy, CancellationToken cancellationToken)
+    private async Task<Answer<Project>> ProjectAsync(WorkspacePlace<TaskEnvironment> copy, CancellationToken cancellationToken)
     {
         var manifest = await manifests.ReadAsync(copy.Path, cancellationToken);
 
@@ -259,11 +260,11 @@ public sealed class TaskEnvironments(
             ? run.App
             : run.Parts.FirstOrDefault(part => part.HasFailed && part.Name != Parts.Keep);
 
-    private static Uri AppOf(Project project) => new($"http://{project.Copy.Environment.App}:{project.Manifest.App.Port}/");
+    private static Uri AppOf(Project project) => new($"http://{project.Copy.Task.App}:{project.Manifest.App.Port}/");
 
     private static (string Text, bool IsCut) Tail(string text, int limit) =>
         text.Length <= limit ? (text, false) : (text[^limit..], true);
 
     /// <summary>The session's copy with the manifest it holds.</summary>
-    private sealed record Project(CopyPlace Copy, EnvironmentManifest Manifest);
+    private sealed record Project(WorkspacePlace<TaskEnvironment> Copy, EnvironmentManifest Manifest);
 }

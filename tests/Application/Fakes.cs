@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Http;
 using Snail.MCP.E2E.Application;
 using Snail.MCP.E2E.Application.Ports;
 using Snail.MCP.E2E.Configuration;
@@ -29,12 +28,9 @@ internal sealed class Stage
 
     public TaskEnvironments Environments(string? root = Copy)
     {
-        var context = new DefaultHttpContext();
-        if (root is not null)
-            context.Request.QueryString = QueryString.Create(SessionCopy.Parameter, root);
-
+        var address = root is null ? new FixedAddress() : new FixedAddress((SessionCopy.Parameter, root));
         var options = Microsoft.Extensions.Options.Options.Create(Options);
-        var session = new SessionCopy(new HttpContextAccessor { HttpContext = context }, options);
+        var session = new SessionCopy(address, options);
 
         return new TaskEnvironments(session, new FakeManifests(this), Jobs, Calls, Use, Leases, options, TimeProvider.System);
     }

@@ -1,10 +1,3 @@
-using System.Diagnostics;
-using System.Globalization;
-using System.Net;
-using System.Net.Sockets;
-using System.Text;
-using ModelContextProtocol.Client;
-using Snail.Sdk.Mcp.Hosting;
 using Snail.Sdk.Mcp.Hosting.Jobs;
 using Snail.Sdk.Mcp.JobClient;
 
@@ -14,73 +7,43 @@ namespace Snail.MCP.E2E.Tests.Tools;
 /// The program as the platform starts it — the build beside the tests, or the publication <c>SNAIL_E2E_SERVER</c>
 /// names — asked over HTTP.
 /// </summary>
-/// <remarks>Nomad's address names a port nothing listens on: no environment is raised, and the tools that need the scheduler have to say so in an answer of their own.</remarks>
+/// <remarks>
+/// The server takes a port, <c>SNAIL_MCP_E2E_PORT</c>, not a URL. Nomad's address names a port nothing listens on: no
+/// environment is raised, and the tools that need the scheduler have to say so in an answer of their own.
+/// </remarks>
 public sealed class ProcessContractTests : IAsyncLifetime
 {
     public const string ServerVariable = "SNAIL_E2E_SERVER";
 
+    private const string PortVariable = "SNAIL_MCP_E2E_PORT";
+
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
 
-    private readonly Uri _address = new($"http://127.0.0.1:{FreePort()}");
     private readonly string _workspaces = TestFolder.Create();
-    private Process _server = default!;
+    private HttpServerProgram _server = default!;
 
     public async Task InitializeAsync()
     {
-        var (command, arguments) = ServerProgram.Command("Snail.MCP.E2E", ServerVariable);
-        var start = new ProcessStartInfo(command, arguments)
+        var environment = new Dictionary<string, string?>
         {
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
+            ["SNAIL_MCP_E2E_NOMAD_ADDRESS"] = $"http://127.0.0.1:{Ports.Free()}",
+            ["SNAIL_MCP_E2E_WORKSPACES_ROOT"] = _workspaces
         };
 
-        start.Environment["SNAIL_MCP_E2E_PORT"] = _address.Port.ToString(CultureInfo.InvariantCulture);
-        start.Environment["SNAIL_MCP_E2E_NOMAD_ADDRESS"] = $"http://127.0.0.1:{FreePort()}";
-        start.Environment["SNAIL_MCP_E2E_WORKSPACES_ROOT"] = _workspaces;
-        start.Environment[ServerSettings.FileVariableOf("e2e")] = ServerProgram.NoSettingsFile;
-
-        _server = Process.Start(start)!;
-        _server.OutputDataReceived += (_, _) => { };
-        _server.ErrorDataReceived += (_, _) => { };
-        _server.BeginOutputReadLine();
-        _server.BeginErrorReadLine();
-
-        using var waiting = new CancellationTokenSource(Timeout);
-        using var http = new HttpClient { BaseAddress = _address };
-
-        while (true)
-        {
-            try
-            {
-                using var answer = await http.GetAsync(new Uri("/healthz", UriKind.Relative), waiting.Token);
-
-                if (answer.IsSuccessStatusCode)
-                    return;
-            }
-            catch (HttpRequestException) when (!_server.HasExited)
-            {
-            }
-
-            await Task.Delay(100, waiting.Token);
-        }
+        _server = await HttpServerProgram.StartAsync("Snail.MCP.E2E", ServerVariable, environment, addressVariable: PortVariable);
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        _server.Kill(entireProcessTree: true);
-        _server.WaitForExit();
-        _server.Dispose();
+        await _server.DisposeAsync();
         Directory.Delete(_workspaces, recursive: true);
-
-        return Task.CompletedTask;
     }
 
     [Fact]
     public async Task ListTools_StartedProgram_OffersEveryTool()
     {
         using var cancellation = new CancellationTokenSource(Timeout);
-        await using var session = await SessionAsync(null, cancellation.Token);
+        await using var session = await _server.SessionAsync(cancellationToken: cancellation.Token);
 
         var tools = await session.ListToolsAsync(cancellationToken: cancellation.Token);
 
@@ -92,7 +55,7 @@ public sealed class ProcessContractTests : IAsyncLifetime
     public async Task Tools_AsListed_KeepTheGuardRules()
     {
         using var cancellation = new CancellationTokenSource(Timeout);
-        await using var session = await SessionAsync(null, cancellation.Token);
+        await using var session = await _server.SessionAsync(cancellationToken: cancellation.Token);
 
         var tools = await session.ListToolsAsync(cancellationToken: cancellation.Token);
 
@@ -103,19 +66,19 @@ public sealed class ProcessContractTests : IAsyncLifetime
     public async Task CallTool_DiagnoseWithoutNomad_NamesTheAddressThatDidNotAnswer()
     {
         using var cancellation = new CancellationTokenSource(Timeout);
-        await using var session = await SessionAsync(null, cancellation.Token);
+        await using var session = await _server.SessionAsync(cancellationToken: cancellation.Token);
 
         var result = await session.CallToolAsync("e2e_diagnose", cancellationToken: cancellation.Token);
 
         Assert.True(result.IsError);
-        Assert.Contains("did not answer", result.Text(), StringComparison.Ordinal);
+        Assert.Contains("did not answer", result.Error(), StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task CallTool_UpWithoutACopyInTheAddress_IsAToolErrorThatSaysWhereTheCopyComesFrom()
     {
         using var cancellation = new CancellationTokenSource(Timeout);
-        await using var session = await SessionAsync(null, cancellation.Token);
+        await using var session = await _server.SessionAsync(cancellationToken: cancellation.Token);
 
         var result = await session.CallToolAsync("e2e_up", cancellationToken: cancellation.Token);
 
@@ -123,18 +86,51 @@ public sealed class ProcessContractTests : IAsyncLifetime
         Assert.Contains("?root=", result.Text(), StringComparison.Ordinal);
     }
 
-    /// <summary>A raise is a job: a client of Snail.Sdk.Mcp.JobClient awaits it to its end, here Nomad's absence said in words.</summary>
+    /// <summary>
+    /// A raise is a job: a client of Snail.Sdk.Mcp.JobClient awaits it to its end, here failed with Nomad's absence said in
+    /// words — it used to end succeeded, the failure's envelope as its result.
+    /// </summary>
     [Fact]
-    public async Task CallJob_UpWithoutNomad_EndsWithTheAddressThatDidNotAnswer()
+    public async Task CallJob_UpWithoutNomad_EndsFailedWithTheAddressThatDidNotAnswer()
     {
         using var cancellation = new CancellationTokenSource(Timeout);
-        await using var session = await SessionAsync($"root={await CopyAsync("0c2b9e1f", cancellation.Token)}", cancellation.Token);
+        await using var session = await _server.SessionAsync($"root={await CopyAsync("0c2b9e1f", cancellation.Token)}", cancellationToken: cancellation.Token);
 
         var report = await session.CallJobAsync("e2e_up", cancellationToken: cancellation.Token);
 
-        Assert.Equal(JobState.Succeeded, report.State);
+        Assert.Equal(JobState.Failed, report.State);
         Assert.StartsWith("job://e2e/up/", report.Uri, StringComparison.Ordinal);
-        Assert.Contains("did not answer", report.Result!.Value.GetRawText(), StringComparison.Ordinal);
+        Assert.Contains("did not answer", report.Message, StringComparison.Ordinal);
+        Assert.NotNull(report.Hint);
+    }
+
+    /// <summary>A raise answered within the wait is its tool's failure — the error, the hint, flagged — with the job's report beside it.</summary>
+    [Fact]
+    public async Task CallTool_UpWithoutNomad_IsAFailureWithTheJobBesideIt()
+    {
+        using var cancellation = new CancellationTokenSource(Timeout);
+        await using var session = await _server.SessionAsync($"root={await CopyAsync("0c2b9e1f", cancellation.Token)}", cancellationToken: cancellation.Token);
+
+        var result = await session.CallToolAsync("e2e_up", new Dictionary<string, object?> { ["wait"] = 30 }, cancellationToken: cancellation.Token);
+
+        Assert.True(result.IsError);
+        Assert.False(result.IsOk());
+        Assert.Contains("did not answer", result.Error(), StringComparison.Ordinal);
+        Assert.Equal(JobState.Failed, result.Report()!.State);
+    }
+
+    /// <summary>A copy whose path climbs out with <c>..</c> is not a task's copy, whatever folder it seems to name.</summary>
+    [Fact]
+    public async Task CallTool_UpAtACopyThatClimbsOut_IsRefusedAsNoTaskCopy()
+    {
+        using var cancellation = new CancellationTokenSource(Timeout);
+        string root = Uri.EscapeDataString($"{_workspaces}/0c2b9e1f/../../etc");
+        await using var session = await _server.SessionAsync($"root={root}", cancellationToken: cancellation.Token);
+
+        var result = await session.CallToolAsync("e2e_up", cancellationToken: cancellation.Token);
+
+        Assert.True(result.IsError);
+        Assert.StartsWith("The working copy", result.Error(), StringComparison.Ordinal);
     }
 
     /// <summary>One server serves every task of the platform: a session of another task does not read a task's job, whatever URI it holds.</summary>
@@ -142,8 +138,8 @@ public sealed class ProcessContractTests : IAsyncLifetime
     public async Task ReadJob_OfAnotherTask_IsUnknownToItsSessions()
     {
         using var cancellation = new CancellationTokenSource(Timeout);
-        await using var owner = await SessionAsync($"root={await CopyAsync("0c2b9e1f", cancellation.Token)}", cancellation.Token);
-        await using var other = await SessionAsync($"root={await CopyAsync("4f1c", cancellation.Token)}", cancellation.Token);
+        await using var owner = await _server.SessionAsync($"root={await CopyAsync("0c2b9e1f", cancellation.Token)}", cancellationToken: cancellation.Token);
+        await using var other = await _server.SessionAsync($"root={await CopyAsync("4f1c", cancellation.Token)}", cancellationToken: cancellation.Token);
 
         var report = await owner.CallJobAsync("e2e_up", cancellationToken: cancellation.Token);
         var read = await owner.ReadJobAsync(report.Uri, cancellation.Token);
@@ -152,16 +148,30 @@ public sealed class ProcessContractTests : IAsyncLifetime
         await Assert.ThrowsAnyAsync<Exception>(() => other.ReadJobAsync(report.Uri, cancellation.Token));
     }
 
+    /// <summary>A tool the address did not grant is refused by name, in the envelope every answer is.</summary>
     [Fact]
     public async Task CallTool_ToolNotGrantedToTheSession_IsRefusedByName()
     {
         using var cancellation = new CancellationTokenSource(Timeout);
-        await using var session = await SessionAsync("tool=e2e_status", cancellation.Token);
+        await using var session = await _server.SessionAsync("tool=e2e_status", cancellationToken: cancellation.Token);
 
         var result = await session.CallToolAsync("e2e_down", cancellationToken: cancellation.Token);
 
         Assert.True(result.IsError);
-        Assert.Contains("'e2e_down' was not granted", result.Text(), StringComparison.Ordinal);
+        Assert.False(result.IsOk());
+        Assert.Contains("'e2e_down' was not granted", result.Error(), StringComparison.Ordinal);
+    }
+
+    /// <summary>A role given some of the tools is listed those alone: a model offered a tool it may not call spends a turn learning so.</summary>
+    [Fact]
+    public async Task ListTools_SessionGrantedOne_ListsThatOneAlone()
+    {
+        using var cancellation = new CancellationTokenSource(Timeout);
+        await using var session = await _server.SessionAsync("tool=e2e_status", cancellationToken: cancellation.Token);
+
+        var tools = await session.ListToolsAsync(cancellationToken: cancellation.Token);
+
+        Assert.Equal(["e2e_status"], tools.Select(tool => tool.Name));
     }
 
     /// <summary>
@@ -171,17 +181,7 @@ public sealed class ProcessContractTests : IAsyncLifetime
     [Fact]
     public async Task Mcp_RequestFromABrowserPage_IsRefused()
     {
-        using var http = new HttpClient { BaseAddress = _address };
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/mcp", UriKind.Relative))
-        {
-            Content = new StringContent("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"page","version":"1"}}}""", Encoding.UTF8, "application/json")
-        };
-        request.Headers.Add("Accept", "application/json, text/event-stream");
-        request.Headers.Add("Origin", "https://evil.example");
-
-        using var answer = await http.SendAsync(request);
-
-        Assert.Equal(HttpStatusCode.Forbidden, answer.StatusCode);
+        Assert.Empty(await HttpGuards.ProblemsAsync(_server.Endpoint));
     }
 
     /// <summary>A step's copy of a task under the workspaces, with a manifest, as the address names it.</summary>
@@ -192,16 +192,5 @@ public sealed class ProcessContractTests : IAsyncLifetime
         await File.WriteAllTextAsync(Path.Combine(copy, ".snail", "environment.json"), """{ "app": { "project": "src/Api/Api.csproj" } }""", cancellationToken);
 
         return Uri.EscapeDataString(copy);
-    }
-
-    private Task<McpClient> SessionAsync(string? query, CancellationToken cancellationToken) =>
-        McpClient.CreateAsync(new HttpClientTransport(new HttpClientTransportOptions { Endpoint = new Uri(_address, query is null ? "/mcp" : $"/mcp?{query}") }), cancellationToken: cancellationToken);
-
-    private static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 }

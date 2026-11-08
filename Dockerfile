@@ -3,7 +3,7 @@
 #
 #   docker build -t s3l-e2e-mcp:local .
 #
-# The server listens on every interface at 8828 for the platform's workers (McpHttpHost.CreateContainerBuilder, on the
+# The server listens on every interface at 8828 for the platform's workers (McpEndpoint.ReadHttp at http://0.0.0.0, on the
 # port of SNAIL_MCP_E2E_PORT: the published port is the boundary, and a browser's request is still refused), and its
 # restore proxy at 3128 for the environments it raises. The SDK is pinned to the band global.json asks for: on the
 # floating sdk:10.0 a newer feature band would one day refuse the build.

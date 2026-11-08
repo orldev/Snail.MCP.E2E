@@ -31,6 +31,9 @@ public readonly partial record struct TaskEnvironment(string Value)
     public static TaskEnvironment? Of(string taskId) =>
         taskId.Length <= MaxTaskId && Label().IsMatch(taskId) ? new($"{Prefix}{taskId}") : null;
 
+    /// <summary>The id of the task the environment is named after: the folder of its copies under the workspaces, and the owner of its jobs.</summary>
+    public string TaskId => Value.StartsWith(Prefix, StringComparison.Ordinal) ? Value[Prefix.Length..] : Value;
+
     /// <summary>The host a part of the environment answers at: <c>e2e-…--app</c>, <c>e2e-…--mongo</c>.</summary>
     public string HostOf(string part) => $"{Value}{Joint}{part}";
 

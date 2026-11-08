@@ -18,19 +18,19 @@ public sealed class DiagnosticsTools(IEnvironmentJobs jobs, IOptions<E2EOptions>
     public async Task<CallToolResult> DiagnoseAsync(CancellationToken cancellationToken = default)
     {
         var reached = await jobs.ReachAsync(cancellationToken);
-        if (reached.Value is not { } version)
-            return ToolResponse.Failure(reached.Error!, reached.Hint);
+        if (!reached.IsSuccess)
+            return ToolAnswer.Failed(reached.Error!, reached.Hint, reached.Type);
 
         var state = new JsonObject
         {
             ["server"] = typeof(DiagnosticsTools).Assembly.GetName().Version?.ToString(3),
-            ["nomad"] = version,
+            ["nomad"] = reached.Value,
             ["network"] = options.Value.Network,
             ["workspaces"] = options.Value.WorkspacesRoot,
             ["restoreProxy"] = options.Value.RestoreProxy,
             ["restoreHosts"] = new JsonArray([.. options.Value.RestoreHosts.Select(host => JsonValue.Create(host))])
         };
 
-        return ToolResponse.Success(state);
+        return ToolAnswer.Ok(state);
     }
 }

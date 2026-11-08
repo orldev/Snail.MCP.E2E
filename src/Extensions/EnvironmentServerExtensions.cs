@@ -1,7 +1,9 @@
-using Snail.MCP.E2E.Application;
+using Microsoft.Extensions.Options;
 using Snail.MCP.E2E.Configuration;
 using Snail.MCP.E2E.Tools;
+using Snail.Sdk.Mcp.Hosting;
 using Snail.Sdk.Mcp.Hosting.Jobs;
+using Snail.Sdk.Mcp.Hosting.Sessions;
 using Snail.Sdk.Mcp.Http;
 
 namespace Snail.MCP.E2E.Extensions;
@@ -12,7 +14,7 @@ public static class EnvironmentServerExtensions
     extension(WebApplicationBuilder builder)
     {
         /// <summary>The tools, the environments and the settings, read from the settings file and the <c>SNAIL_MCP_E2E_</c> variables only.</summary>
-        /// <remarks>The host is Snail.Sdk.Mcp.Http's container host: log lines on stderr, where the container's log driver collects them.</remarks>
+        /// <remarks>The host is Snail.Sdk.Mcp.Http's, at the endpoint the settings name: log lines on stderr, where the container's log driver or launchd collects them.</remarks>
         public WebApplicationBuilder ConfigureEnvironmentServer()
         {
             builder.Services
@@ -29,20 +31,22 @@ public static class EnvironmentServerExtensions
                     options.ServerInfo = Snail.Sdk.Mcp.Hosting.ServerIdentity.Of(typeof(EnvironmentServerExtensions).Assembly);
                     options.ServerInstructions = ServerGuidance.Instructions;
                 })
-                .RefuseWhatWasNotGranted()
+                .ExplainFailures()
                 .WithHttpTransport()
+                .WithSessionAddress()
+                .WithSessionGrant()
                 .WithTools<EnvironmentTools>()
                 .WithTools<DiagnosticsTools>()
-                .WithJobs("e2e", OwnerOf);
+                .WithJobs("e2e", JobOwners.TaskOfCopy(WorkspacesOf, TaskEnvironment.Of, environment => environment.TaskId));
 
             return builder;
         }
     }
 
-    /// <summary>The owner of a request's jobs: the environment of the task whose copy the session's address names.</summary>
+    /// <summary>The folder the task's copies lie under, which names the owner of a request's jobs: the task whose copy the session's address names.</summary>
     /// <remarks>One server serves every task of the platform; a session of one task must not read another's test output.</remarks>
-    private static string? OwnerOf(IServiceProvider services) =>
-        services.GetService<SessionCopy>()?.Current().Value?.Environment.Value;
+    private static string WorkspacesOf(IServiceProvider services) =>
+        services.GetRequiredService<IOptions<E2EOptions>>().Value.WorkspacesRoot;
 
     extension(WebApplication app)
     {
@@ -54,7 +58,7 @@ public static class EnvironmentServerExtensions
         public WebApplication UseEnvironmentEndpoints()
         {
             app.MapLocalMcp();
-            app.MapGet("/healthz", () => Results.Ok());
+            app.MapHealth();
 
             return app;
         }

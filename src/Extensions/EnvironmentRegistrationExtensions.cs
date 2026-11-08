@@ -15,9 +15,7 @@ public static class EnvironmentRegistrationExtensions
         public IServiceCollection AddEnvironments()
         {
             services.AddSingleton(TimeProvider.System);
-            services.AddHttpContextAccessor();
             services.AddSingleton<SessionCopy>();
-            services.AddSingleton<SessionGrant>();
             services.AddSingleton<EnvironmentUse>();
             services.AddSingleton<EnvironmentLeases>();
             services.AddSingleton<IManifests, FileManifests>();

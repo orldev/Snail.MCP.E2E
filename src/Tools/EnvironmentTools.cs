@@ -21,13 +21,13 @@ public sealed class EnvironmentTools(TaskEnvironments environments, EnvironmentW
     [McpServerTool(Name = "e2e_status", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description(ToolDescriptions.Status)]
     public async Task<CallToolResult> StatusAsync(CancellationToken cancellationToken = default) =>
-        ToolResponse.From(await environments.StatusAsync(cancellationToken));
+        ToolAnswer.From(await environments.StatusAsync(cancellationToken), AnswerContent.Of);
 
     /// <summary>Stops the environment.</summary>
     [McpServerTool(Name = "e2e_down", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description(ToolDescriptions.Down)]
     public async Task<CallToolResult> DownAsync(CancellationToken cancellationToken = default) =>
-        ToolResponse.From(await environments.DownAsync(cancellationToken));
+        ToolAnswer.From(await environments.DownAsync(cancellationToken), AnswerContent.Stopped);
 
     /// <summary>Sends one request to the app.</summary>
     [McpServerTool(Name = "e2e_http", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
@@ -41,10 +41,10 @@ public sealed class EnvironmentTools(TaskEnvironments environments, EnvironmentW
         CancellationToken cancellationToken = default)
     {
         var call = Calls.Of(method, path, body, contentType, headers);
-        if (call.Value is not { } request)
-            return ToolResponse.Failure(call.Error!, call.Hint);
+        if (!call.IsSuccess)
+            return ToolAnswer.Failed(call.Error!, call.Hint, call.Type);
 
-        return ToolResponse.From(await environments.CallAsync(request, cancellationToken));
+        return ToolAnswer.From(await environments.CallAsync(call.Value!, cancellationToken), AnswerContent.Of);
     }
 
     /// <summary>Reads the end of a part's output.</summary>
@@ -54,7 +54,7 @@ public sealed class EnvironmentTools(TaskEnvironments environments, EnvironmentW
         [Description(ToolDescriptions.LogsPart)] string part,
         [Description(ToolDescriptions.LogsBytes)] int? bytes = null,
         CancellationToken cancellationToken = default) =>
-        ToolResponse.From(await environments.LogsAsync(part, bytes, cancellationToken));
+        ToolAnswer.From(await environments.LogsAsync(part, bytes, cancellationToken), AnswerContent.Of);
 
     /// <summary>Runs the end-to-end tests as a job and answers within the wait.</summary>
     [McpServerTool(Name = "e2e_test", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]

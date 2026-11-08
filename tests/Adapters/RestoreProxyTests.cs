@@ -94,7 +94,7 @@ public sealed class RestoreProxyTests
 
     private static async Task<Running> ProxyAsync(int maxConnections)
     {
-        var options = Options.Create(new E2EOptions { RestoreProxyPort = FreePort() });
+        var options = Options.Create(new E2EOptions { RestoreProxyPort = Ports.Free() });
         var proxy = new RestoreProxy(options, NullLogger<RestoreProxy>.Instance) { MaxConnections = maxConnections, HeadTimeout = TimeSpan.FromMilliseconds(300) };
         await proxy.StartAsync(CancellationToken.None);
 
@@ -118,14 +118,6 @@ public sealed class RestoreProxyTests
         int got = await client.GetStream().ReadAsync(buffer).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
 
         return Encoding.ASCII.GetString(buffer, 0, got);
-    }
-
-    private static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
     private sealed class Running(RestoreProxy proxy) : IAsyncDisposable

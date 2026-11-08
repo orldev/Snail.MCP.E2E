@@ -14,9 +14,13 @@ public static class E2ESettings
     /// <summary>The server's short name, which names its settings file and the prefix of its variables.</summary>
     public const string Name = "e2e";
 
-    /// <summary>The port the server listens on, on every interface: Port (<c>SNAIL_MCP_E2E_PORT</c>), read before the host exists.</summary>
-    public static int Port() =>
-        int.TryParse(Read()[nameof(E2EOptions.Port)], NumberStyles.None, CultureInfo.InvariantCulture, out int port) ? port : new E2EOptions().Port;
+    /// <summary>Where the server listens when its settings name no address: every interface, at the port of <see cref="E2EOptions.Port"/>.</summary>
+    /// <remarks>
+    /// Every interface by design, in its container and under launchd alike: the platform's workers reach it from other
+    /// containers and machines, and a browser's request is refused at the MCP path. A Port (<c>SNAIL_MCP_E2E_PORT</c>)
+    /// keeps the host and moves the port; a loopback Url (<c>SNAIL_MCP_E2E_URL</c>) narrows it.
+    /// </remarks>
+    public static Uri DefaultUrl { get; } = new($"http://0.0.0.0:{new E2EOptions().Port.ToString(CultureInfo.InvariantCulture)}/");
 
     /// <summary>The settings as they stand: the settings file found, then the process's variables.</summary>
     public static IConfiguration Read() => Read(ServerSettings.FileOf(Name), Environment.GetEnvironmentVariables());

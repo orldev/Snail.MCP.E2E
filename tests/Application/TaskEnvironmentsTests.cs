@@ -69,27 +69,34 @@ public sealed class TaskEnvironmentsTests
         Assert.Equal(EnvironmentState.Starting, answer.Value!.State);
     }
 
-    [Fact]
-    public void Session_AddressWithoutACopy_IsRefusedWithWhereTheCopyComesFrom()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("  ")]
+    public void Session_AddressWithoutACopy_IsRefusedWithWhereTheCopyComesFrom(string? root)
     {
-        var answer = new Stage().Environments(root: null).Session();
+        var answer = new Stage().Environments(root).Session();
 
         Assert.Equal(Messages.NoCopy, answer.Error);
         Assert.Equal(Messages.NoCopyHint, answer.Hint);
+        Assert.Equal("noRoot", answer.Type);
     }
 
+    /// <summary>One sentence for every root that is no task's copy, typed by the reason so a program can tell them apart.</summary>
     [Theory]
-    [InlineData("/etc")]
-    [InlineData("/workspaces/../etc")]
-    [InlineData("/workspaces")]
-    [InlineData("/workspaces/Task_1/step-1")]
-    public void Session_CopyOutsideTheWorkspaces_IsRefused(string root)
+    [InlineData("/etc", "outside")]
+    [InlineData("/workspaces/../etc", "malformed")]
+    [InlineData("/workspaces", "outside")]
+    [InlineData("/workspaces/Task_1/step-1", "notATask")]
+    [InlineData("/workspaces/0c2b9e1f/../../etc", "malformed")]
+    [InlineData("/workspaces-old/0c2b9e1f/step-1", "outside")]
+    public void Session_CopyOutsideTheWorkspaces_IsRefused(string root, string type)
     {
         var stage = new Stage();
 
         var answer = stage.Environments(root).Session();
 
         Assert.StartsWith("The working copy", answer.Error, StringComparison.Ordinal);
+        Assert.Equal(type, answer.Type);
     }
 
     [Fact]

@@ -8,7 +8,7 @@ needs (a database, a broker) by image, and its end-to-end tests. The app is buil
 of its own, beside its services; only NuGet is reachable from it. The first raise restores packages and builds,
 which takes minutes; the app is given up to 300 seconds to answer. Raise again after changing the code: the
 environment is replaced by one running the current files. The state is one of ready, starting, failed or stopped; when it is failed, the
-answer carries the end of the app's output with the reason. It runs as a job: the answer comes within the wait with the result, or with the job's resource, whose text holds the result once it ends. One environment does one raise or test run at a time; the next waits its turn, and e2e_down cancels them.
+answer carries the end of the app's output with the reason. It runs as a job: the answer comes within the wait with the result, or with the job's resource, whose text holds the result once it ends, or why it failed. One environment does one raise or test run at a time; the next waits its turn, and e2e_down cancels them.
 
 *only adds · every call adds · stays on this machine.*
 
@@ -186,7 +186,7 @@ at most 65536.
 Run the project's end-to-end tests against the running app: dotnet test of the test project the manifest names,
 in the environment's network, with the settings that point it at the app. The run gets up to 900 seconds,
 restore and build included. The outcome is one of passed, failed, buildFailed, noTests or timedOut; the answer counts the tests, names up to 20 that
-failed, and carries the end of the output, up to 16384 bytes. It runs as a job: the answer comes within the wait with the result, or with the job's resource, whose text holds the result once it ends. One environment does one raise or test run at a time; the next waits its turn, and e2e_down cancels them.
+failed, and carries the end of the output, up to 16384 bytes. It runs as a job: the answer comes within the wait with the result, or with the job's resource, whose text holds the result once it ends, or why it failed. One environment does one raise or test run at a time; the next waits its turn, and e2e_down cancels them.
 
 *only adds · every call adds · stays on this machine.*
 

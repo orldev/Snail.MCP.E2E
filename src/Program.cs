@@ -1,10 +1,25 @@
 using Snail.MCP.E2E.Configuration;
 using Snail.MCP.E2E.Extensions;
+using Snail.Sdk.Mcp.Hosting;
 using Snail.Sdk.Mcp.Http;
 
-var app = McpHttpHost.CreateContainerBuilder(args, E2ESettings.Port())
-    .ConfigureEnvironmentServer()
-    .Build()
-    .UseEnvironmentEndpoints();
+try
+{
+    var settings = E2ESettings.Read();
+    var endpoint = McpEndpoint.ReadHttp(settings, E2ESettings.DefaultUrl, new McpEndpointOptions { Reach = McpReach.Unrestricted, Server = E2ESettings.Name });
 
-await app.RunAsync();
+    var app = McpHttpHost.CreateBuilder(args, endpoint, settings)
+        .ConfigureEnvironmentServer()
+        .Build()
+        .UseEnvironmentEndpoints();
+
+    await app.RunAsync();
+
+    return 0;
+}
+catch (StartRefusedException refused)
+{
+    await Console.Error.WriteLineAsync(refused.Message);
+
+    return 1;
+}

@@ -85,7 +85,7 @@ public static class ToolDescriptions
 
     /// <summary>How a raise and a test run answer: within the wait, or with the job they go on as.</summary>
     public const string Job =
-        "It runs as a job: the answer comes within the wait with the result, or with the job's resource, whose text holds the result once it ends. One environment does one raise or test run at a time; the next waits its turn, and e2e_down cancels them.";
+        "It runs as a job: the answer comes within the wait with the result, or with the job's resource, whose text holds the result once it ends, or why it failed. One environment does one raise or test run at a time; the next waits its turn, and e2e_down cancels them.";
 
     /// <summary>The wait parameter of e2e_up and e2e_test.</summary>
     public const string Wait = "Seconds to wait for the result before answering with the job in flight, 0 to 900; 0 answers at once.";
