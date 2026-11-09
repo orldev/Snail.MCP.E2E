@@ -202,9 +202,10 @@ public sealed class ProcessContractTests : IAsyncLifetime
     }
 
     /// <summary>A step's copy of a task under the workspaces, with a manifest, as the address names it.</summary>
+    /// <remarks>Joined with '/', as the platform's address is: Path.Combine wrote '\' on Windows, and the server refused the copy.</remarks>
     private async Task<string> CopyAsync(string task, CancellationToken cancellationToken)
     {
-        string copy = Path.Combine(_workspaces, task, "step-1");
+        string copy = $"{_workspaces}/{task}/step-1";
         Directory.CreateDirectory(Path.Combine(copy, ".snail"));
         await File.WriteAllTextAsync(Path.Combine(copy, ".snail", "environment.json"), """{ "app": { "project": "src/Api/Api.csproj" } }""", cancellationToken);
 
