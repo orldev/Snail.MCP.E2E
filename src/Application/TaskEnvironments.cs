@@ -62,8 +62,8 @@ public sealed class TaskEnvironments(
     private async Task<Answer<EnvironmentStatus>> RaiseAsync(WorkspacePlace<TaskEnvironment> copy, CancellationToken cancellationToken)
     {
         var read = await ProjectAsync(copy, cancellationToken);
-        if (read.Value is not { } project)
-            return Answer.Failed<EnvironmentStatus>(read.Error!, read.Hint);
+        if (!read.TryGet(out var project))
+            return read.As<EnvironmentStatus>();
 
         use.Touch(copy.Task);
         var raised = await jobs.RaiseAsync(new EnvironmentPlan(copy.Task, copy.Path, project.Manifest), cancellationToken);
@@ -74,12 +74,12 @@ public sealed class TaskEnvironments(
     private async Task<Answer<EnvironmentStatus>> ReadStatusAsync(CancellationToken cancellationToken)
     {
         var place = session.Current();
-        if (place.Value is not { } copy)
-            return Answer.Failed<EnvironmentStatus>(place.Error!, place.Hint);
+        if (!place.TryGet(out var copy))
+            return place.As<EnvironmentStatus>();
 
         var read = await ProjectAsync(copy, cancellationToken);
-        if (read.Value is not { } project)
-            return Answer.Failed<EnvironmentStatus>(read.Error!, read.Hint);
+        if (!read.TryGet(out var project))
+            return read.As<EnvironmentStatus>();
 
         return Answer.Ok(await LookAsync(project, RaiseMark.None, cancellationToken));
     }
@@ -87,8 +87,8 @@ public sealed class TaskEnvironments(
     private async Task<Answer<bool>> StopAsync(CancellationToken cancellationToken)
     {
         var place = session.Current();
-        if (place.Value is not { } copy)
-            return Answer.Failed<bool>(place.Error!, place.Hint);
+        if (!place.TryGet(out var copy))
+            return place.As<bool>();
 
         leases.CancelAll(copy.Task);
         var lease = leases.Join(copy.Task, LeaseKinds.Down);
@@ -116,8 +116,8 @@ public sealed class TaskEnvironments(
             return Answer.Failed<HttpExchange>(Messages.BadPath(call.Path));
 
         var read = await RunningAsync(cancellationToken);
-        if (read.Value is not { } project)
-            return Answer.Failed<HttpExchange>(read.Error!, read.Hint);
+        if (!read.TryGet(out var project))
+            return read.As<HttpExchange>();
 
         var exchange = await calls.SendAsync(AppOf(project), call with { Method = call.Method.ToUpperInvariant() }, options.Value.ResponseBytes, cancellationToken);
 
@@ -127,8 +127,8 @@ public sealed class TaskEnvironments(
     private async Task<Answer<LogTail>> ReadLogsAsync(string part, int? bytes, CancellationToken cancellationToken)
     {
         var read = await RunningAsync(cancellationToken);
-        if (read.Value is not { } project)
-            return Answer.Failed<LogTail>(read.Error!, read.Hint);
+        if (!read.TryGet(out var project))
+            return read.As<LogTail>();
 
         IReadOnlyList<string> parts = [Parts.App, .. project.Manifest.Services.Keys, Parts.Tests];
         if (!parts.Contains(part, StringComparer.Ordinal))
@@ -148,8 +148,8 @@ public sealed class TaskEnvironments(
             return Answer.Failed<TestReport>(Messages.BadFilter(filter));
 
         var read = await RunningAsync(copy, cancellationToken);
-        if (read.Value is not { } project)
-            return Answer.Failed<TestReport>(read.Error!, read.Hint);
+        if (!read.TryGet(out var project))
+            return read.As<TestReport>();
 
         if (project.Manifest.Tests is not { } tests)
             return Answer.Failed<TestReport>(Messages.NoTests, Messages.NoManifestHint);
@@ -214,7 +214,7 @@ public sealed class TaskEnvironments(
     {
         var place = session.Current();
 
-        return place.Value is { } copy ? await RunningAsync(copy, cancellationToken) : Answer.Failed<Project>(place.Error!, place.Hint);
+        return place.TryGet(out var copy) ? await RunningAsync(copy, cancellationToken) : place.As<Project>();
     }
 
     private async Task<Answer<Project>> RunningAsync(WorkspacePlace<TaskEnvironment> copy, CancellationToken cancellationToken)
@@ -235,9 +235,9 @@ public sealed class TaskEnvironments(
     {
         var manifest = await manifests.ReadAsync(copy.Path, cancellationToken);
 
-        return manifest.Value is { } read
+        return manifest.TryGet(out var read)
             ? Answer.Ok(new Project(copy, read))
-            : Answer.Failed<Project>(manifest.Error!, manifest.Hint);
+            : manifest.As<Project>();
     }
 
     /// <summary>The answer of a call, or what Nomad's failure means for it: nothing happened, and why.</summary>

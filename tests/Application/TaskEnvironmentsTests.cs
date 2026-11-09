@@ -99,6 +99,36 @@ public sealed class TaskEnvironmentsTests
         Assert.Equal(type, answer.Type);
     }
 
+    /// <summary>
+    /// The calls that read the session's copy themselves refuse a root as e2e_up does, typed by the reason: they copied
+    /// the refusal's error and hint by hand and lost its type, so up said <c>noRoot</c> and status, down, http and logs
+    /// said nothing a program could branch on.
+    /// </summary>
+    [Theory]
+    [InlineData("status", null, "noRoot")]
+    [InlineData("down", null, "noRoot")]
+    [InlineData("http", null, "noRoot")]
+    [InlineData("logs", null, "noRoot")]
+    [InlineData("status", "/etc", "outside")]
+    [InlineData("down", "/workspaces/../etc", "malformed")]
+    [InlineData("http", "/workspaces/Task_1/step-1", "notATask")]
+    [InlineData("logs", "/etc", "outside")]
+    public async Task CallReadingTheSession_RootThatIsNoCopy_IsRefusedTypedAsUpIs(string tool, string? root, string type)
+    {
+        var environments = new Stage().Environments(root);
+
+        string? said = tool switch
+        {
+            "status" => (await environments.StatusAsync(CancellationToken.None)).Type,
+            "down" => (await environments.DownAsync(CancellationToken.None)).Type,
+            "http" => (await environments.CallAsync(new HttpCall("GET", "/orders", null, "application/json", []), CancellationToken.None)).Type,
+            _ => (await environments.LogsAsync("app", null, CancellationToken.None)).Type
+        };
+
+        Assert.Equal(environments.Session().Type, said);
+        Assert.Equal(type, said);
+    }
+
     [Fact]
     public async Task UpAsync_CopyWithoutAManifest_SaysHowToWriteOne()
     {

@@ -59,7 +59,8 @@ default to 8080 and `/health`; comments and trailing commas are allowed. Snail.S
 - The server is native (Native AOT) on `runtime-deps`: it answers its health check about 40 ms after it starts and
   holds about 40 MB, against 130 ms and 100 MB framework-dependent. It listens on every interface by design — in its
   container, and under launchd too, since the platform's workers reach it from elsewhere — and refuses a request a
-  browser makes (one with `Origin`) with 403.
+  browser makes (one with `Origin`) with 403. Every client is given a session, so one subscribed to a raise or a test
+  run is told of its end.
 
 ## Running it
 

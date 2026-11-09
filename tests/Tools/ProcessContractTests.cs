@@ -119,6 +119,20 @@ public sealed class ProcessContractTests : IAsyncLifetime
         Assert.Equal(JobState.Failed, result.Report()!.State);
     }
 
+    /// <summary>
+    /// Every client is given a session, as by every server of the fleet: on the MCP SDK's default transport, stateless
+    /// since 2.2, a client that opens with initialize and subscribes to a raise or a test run is never told of its end,
+    /// since the server keeps no stream to tell it on — Snail.MCP.Security's scan waited forever so.
+    /// </summary>
+    [Fact]
+    public async Task Initialize_StartedProgram_GivesTheClientASession()
+    {
+        using var cancellation = new CancellationTokenSource(Timeout);
+        await using var session = await _server.SessionAsync(cancellationToken: cancellation.Token);
+
+        Assert.False(string.IsNullOrEmpty(session.SessionId));
+    }
+
     /// <summary>A copy whose path climbs out with <c>..</c> is not a task's copy, whatever folder it seems to name.</summary>
     [Fact]
     public async Task CallTool_UpAtACopyThatClimbsOut_IsRefusedAsNoTaskCopy()

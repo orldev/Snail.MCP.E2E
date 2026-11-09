@@ -14,7 +14,16 @@ public static class EnvironmentServerExtensions
     extension(WebApplicationBuilder builder)
     {
         /// <summary>The tools, the environments and the settings, read from the settings file and the <c>SNAIL_MCP_E2E_</c> variables only.</summary>
-        /// <remarks>The host is Snail.Sdk.Mcp.Http's, at the endpoint the settings name: log lines on stderr, where the container's log driver or launchd collects them.</remarks>
+        /// <remarks>
+        /// <para>The host is Snail.Sdk.Mcp.Http's, at the endpoint the settings name: log lines on stderr, where the container's log driver or launchd collects them.</para>
+        /// <para>
+        /// A session for every client (<c>WithLocalHttpTransport</c>), as on every server of the fleet. The MCP SDK's own
+        /// <c>WithHttpTransport()</c>, which the server was written with, is stateless by default since 2.2: a client that
+        /// opens with initialize and subscribes to a raise or a test run is never told of its end, since a stateless
+        /// server keeps no stream to tell it on. The copy, the grant and the owner of a job are read from each request's
+        /// address either way.
+        /// </para>
+        /// </remarks>
         public WebApplicationBuilder ConfigureEnvironmentServer()
         {
             builder.Services
@@ -32,8 +41,7 @@ public static class EnvironmentServerExtensions
                     options.ServerInstructions = ServerGuidance.Instructions;
                 })
                 .ExplainFailures()
-                .WithHttpTransport()
-                .WithSessionAddress()
+                .WithLocalHttpTransport()
                 .WithSessionGrant()
                 .WithTools<EnvironmentTools>()
                 .WithTools<DiagnosticsTools>()
