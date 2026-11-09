@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using Snail.MCP.E2E.Application;
+using Snail.Sdk.Mcp.Hosting;
 
 namespace Snail.MCP.E2E.Tools;
 
@@ -21,13 +22,13 @@ public static class Calls
         string type = string.IsNullOrWhiteSpace(contentType) ? DefaultContentType : contentType.Trim();
 
         if (!MediaTypeHeaderValue.TryParse(type, out _))
-            return Answer.Failed(Messages.BadContentType(type));
+            return Answer.Failed(Messages.BadContentType(type), type: ToolFailures.Arguments);
 
         var pairs = new List<KeyValuePair<string, string>>();
         foreach (string header in headers ?? [])
         {
             if (HeaderOf(header, hasBody: sent is not null) is not { } pair)
-                return Answer.Failed(Messages.BadHeader(header));
+                return Answer.Failed(Messages.BadHeader(header), type: ToolFailures.Arguments);
 
             pairs.Add(pair);
         }

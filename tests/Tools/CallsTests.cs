@@ -1,5 +1,6 @@
 using Snail.MCP.E2E.Application;
 using Snail.MCP.E2E.Tools;
+using Snail.Sdk.Mcp.Hosting;
 
 namespace Snail.MCP.E2E.Tests.Tools;
 
@@ -30,6 +31,7 @@ public sealed class CallsTests
 
         Assert.Null(call.Value);
         Assert.Equal(Messages.BadContentType("json please"), call.Error);
+        Assert.Equal(ToolFailures.Arguments, call.Type);
     }
 
     /// <summary>A header without a colon was dropped without a word: the model believed it had sent what it had not.</summary>
@@ -43,6 +45,7 @@ public sealed class CallsTests
 
         Assert.Null(call.Value);
         Assert.Equal(Messages.BadHeader(header), call.Error);
+        Assert.Equal(ToolFailures.Arguments, call.Type);
     }
 
     [Fact]

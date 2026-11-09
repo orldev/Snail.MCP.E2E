@@ -1,5 +1,6 @@
 using Snail.MCP.E2E.Application;
 using Snail.MCP.E2E.Application.Ports;
+using Snail.Sdk.Mcp.Hosting;
 using Snail.Sdk.Mcp.Hosting.Sessions;
 
 namespace Snail.MCP.E2E.Tests.Application;
@@ -187,6 +188,7 @@ public sealed class TaskEnvironmentsTests
         var answer = await stage.Environments().LogsAsync("redis", null, CancellationToken.None);
 
         Assert.Equal(Messages.UnknownPart("redis", ["app", "mongo", "tests"]), answer.Error);
+        Assert.Equal(ToolFailures.Arguments, answer.Type);
     }
 
     [Fact]
@@ -213,6 +215,7 @@ public sealed class TaskEnvironmentsTests
         var answer = await stage.TestAsync("FullyQualifiedName~${node.unique.id}");
 
         Assert.Equal(Messages.BadFilter("FullyQualifiedName~${node.unique.id}"), answer.Error);
+        Assert.Equal(ToolFailures.Arguments, answer.Type);
         Assert.Empty(stage.Jobs.Tested);
     }
 

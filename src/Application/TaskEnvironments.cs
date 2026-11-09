@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using Snail.MCP.E2E.Application.Ports;
 using Snail.MCP.E2E.Configuration;
+using Snail.Sdk.Mcp.Hosting;
 using Snail.Sdk.Mcp.Hosting.Sessions;
 
 namespace Snail.MCP.E2E.Application;
@@ -110,10 +111,10 @@ public sealed class TaskEnvironments(
     private async Task<Answer<HttpExchange>> SendAsync(HttpCall call, CancellationToken cancellationToken)
     {
         if (!Methods.Contains(call.Method, StringComparer.OrdinalIgnoreCase))
-            return Answer.Failed(Messages.BadMethod(call.Method));
+            return Answer.Failed(Messages.BadMethod(call.Method), type: ToolFailures.Arguments);
 
         if (!AppAddress.IsAppPath(call.Path))
-            return Answer.Failed(Messages.BadPath(call.Path));
+            return Answer.Failed(Messages.BadPath(call.Path), type: ToolFailures.Arguments);
 
         var read = await RunningAsync(cancellationToken);
         if (!read.TryGet(out var project))
@@ -132,7 +133,7 @@ public sealed class TaskEnvironments(
 
         IReadOnlyList<string> parts = [Parts.App, .. project.Manifest.Services.Keys, Parts.Tests];
         if (!parts.Contains(part, StringComparer.Ordinal))
-            return Answer.Failed(Messages.UnknownPart(part, parts));
+            return Answer.Failed(Messages.UnknownPart(part, parts), type: ToolFailures.Arguments);
 
         int wanted = Math.Clamp(bytes ?? options.Value.DefaultLogBytes, 1, options.Value.MaxLogBytes);
         var environment = project.Copy.Task;
@@ -145,7 +146,7 @@ public sealed class TaskEnvironments(
     private async Task<Answer<TestReport>> RunTestsAsync(WorkspacePlace<TaskEnvironment> copy, string? filter, CancellationToken cancellationToken)
     {
         if (filter is not null && !ManifestRules.IsLiteral(filter))
-            return Answer.Failed(Messages.BadFilter(filter));
+            return Answer.Failed(Messages.BadFilter(filter), type: ToolFailures.Arguments);
 
         var read = await RunningAsync(copy, cancellationToken);
         if (!read.TryGet(out var project))
