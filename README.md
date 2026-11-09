@@ -47,9 +47,8 @@ default to 8080 and `/health`; comments and trailing commas are allowed. Snail.S
   only, with limits of its own: 256 connections, 10 s for a request head, 2 minutes of silence.
 - `e2e_up` and `e2e_test` run as jobs: the call answers within its `wait` (60 s unless asked otherwise) with the result,
   or with the job's `job://e2e/…` resource, whose text holds the result once it ends. A raise or a test run that could
-  not happen — no manifest, no Nomad, stopped by `e2e_down` — answers `ok: false` with its error and hint, and its job
-  ends failed with the same words. One environment does one thing
-  at a time: the same call while it runs — a test run with the same filter — waits on the same job, another waits its
+  not happen — no manifest, no Nomad, stopped by `e2e_down` — answers `ok: false` with its error, hint and `type`,
+  flagged `isError`, and its job ends failed with the same words. One environment does one thing at a time: the same call while it runs — a test run with the same filter — waits on the same job, another waits its
   turn, `e2e_down` cancels them. A job of one task is unknown to the sessions of another; the last twenty ended jobs of
   each task stay readable.
 - The tests run as the batch job `e2e-<task>--tests` in the same network, with `APP_URL` pointing at the app. A run
@@ -65,12 +64,11 @@ default to 8080 and `/health`; comments and trailing commas are allowed. Snail.S
 ## Running it
 
 ```bash
-docker build --build-context feed=../../nuget -t s3l-e2e-mcp:local .
+docker build -t s3l-e2e-mcp:local .
 ```
 
-The Snail.Sdk version `global.json` asks for is in the local feed until it is released, so the build takes that feed
-as the build context `feed`. In Snail.Swarm.Agent
-the server stands beside the MCP kit: `SWARM_ENVIRONMENTS=1 sh deploy/stand.sh up` (`deploy/compose.environments.yml`).
+In Snail.Swarm.Agent the server stands beside the MCP kit: `SWARM_ENVIRONMENTS=1 sh deploy/stand.sh up`
+(`deploy/compose.environments.yml`).
 
 | Setting | Default | |
 | --- | --- | --- |

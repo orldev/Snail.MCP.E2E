@@ -110,10 +110,10 @@ public sealed class TaskEnvironments(
     private async Task<Answer<HttpExchange>> SendAsync(HttpCall call, CancellationToken cancellationToken)
     {
         if (!Methods.Contains(call.Method, StringComparer.OrdinalIgnoreCase))
-            return Answer.Failed<HttpExchange>(Messages.BadMethod(call.Method));
+            return Answer.Failed(Messages.BadMethod(call.Method));
 
         if (!AppAddress.IsAppPath(call.Path))
-            return Answer.Failed<HttpExchange>(Messages.BadPath(call.Path));
+            return Answer.Failed(Messages.BadPath(call.Path));
 
         var read = await RunningAsync(cancellationToken);
         if (!read.TryGet(out var project))
@@ -121,7 +121,7 @@ public sealed class TaskEnvironments(
 
         var exchange = await calls.SendAsync(AppOf(project), call with { Method = call.Method.ToUpperInvariant() }, options.Value.ResponseBytes, cancellationToken);
 
-        return exchange is null ? Answer.Failed<HttpExchange>(Messages.Unreachable, Messages.NotRaisedHint) : Answer.Ok(exchange);
+        return exchange is null ? Answer.Failed(Messages.Unreachable, Messages.NotRaisedHint) : Answer.Ok(exchange);
     }
 
     private async Task<Answer<LogTail>> ReadLogsAsync(string part, int? bytes, CancellationToken cancellationToken)
@@ -132,7 +132,7 @@ public sealed class TaskEnvironments(
 
         IReadOnlyList<string> parts = [Parts.App, .. project.Manifest.Services.Keys, Parts.Tests];
         if (!parts.Contains(part, StringComparer.Ordinal))
-            return Answer.Failed<LogTail>(Messages.UnknownPart(part, parts));
+            return Answer.Failed(Messages.UnknownPart(part, parts));
 
         int wanted = Math.Clamp(bytes ?? options.Value.DefaultLogBytes, 1, options.Value.MaxLogBytes);
         var environment = project.Copy.Task;
@@ -145,14 +145,14 @@ public sealed class TaskEnvironments(
     private async Task<Answer<TestReport>> RunTestsAsync(WorkspacePlace<TaskEnvironment> copy, string? filter, CancellationToken cancellationToken)
     {
         if (filter is not null && !ManifestRules.IsLiteral(filter))
-            return Answer.Failed<TestReport>(Messages.BadFilter(filter));
+            return Answer.Failed(Messages.BadFilter(filter));
 
         var read = await RunningAsync(copy, cancellationToken);
         if (!read.TryGet(out var project))
             return read.As<TestReport>();
 
         if (project.Manifest.Tests is not { } tests)
-            return Answer.Failed<TestReport>(Messages.NoTests, Messages.NoManifestHint);
+            return Answer.Failed(Messages.NoTests, Messages.NoManifestHint);
 
         long started = clock.GetTimestamp();
         var plan = new TestPlan(copy.Task, copy.Path, project.Manifest, tests, string.IsNullOrWhiteSpace(filter) ? null : filter.Trim());
@@ -224,7 +224,7 @@ public sealed class TaskEnvironments(
             return read;
 
         if (await jobs.RunAsync(project.Copy.Task, RaiseMark.None, cancellationToken) is null)
-            return Answer.Failed<Project>(Messages.NotRaised, Messages.NotRaisedHint);
+            return Answer.Failed(Messages.NotRaised, Messages.NotRaisedHint);
 
         use.Touch(project.Copy.Task);
 
@@ -249,7 +249,7 @@ public sealed class TaskEnvironments(
         }
         catch (SchedulerException failure)
         {
-            return Answer.Failed<T>(Messages.SchedulerDown(options.Value.NomadAddress, failure.Message), Messages.SchedulerDownHint);
+            return Answer.Failed(Messages.SchedulerDown(options.Value.NomadAddress, failure.Message), Messages.SchedulerDownHint);
         }
     }
 

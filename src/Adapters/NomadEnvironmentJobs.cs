@@ -76,7 +76,7 @@ public sealed class NomadEnvironmentJobs(INomadClient nomad, IOptions<E2EOptions
         }
         catch (SchedulerException failure)
         {
-            return Answer.Failed<string>(Messages.SchedulerDown(options.Value.NomadAddress, failure.Message), Messages.SchedulerDownHint);
+            return Answer.Failed(Messages.SchedulerDown(options.Value.NomadAddress, failure.Message), Messages.SchedulerDownHint);
         }
     }
 

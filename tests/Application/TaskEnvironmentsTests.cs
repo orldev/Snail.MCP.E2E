@@ -1,5 +1,6 @@
 using Snail.MCP.E2E.Application;
 using Snail.MCP.E2E.Application.Ports;
+using Snail.Sdk.Mcp.Hosting.Sessions;
 
 namespace Snail.MCP.E2E.Tests.Application;
 
@@ -78,17 +79,17 @@ public sealed class TaskEnvironmentsTests
 
         Assert.Equal(Messages.NoCopy, answer.Error);
         Assert.Equal(Messages.NoCopyHint, answer.Hint);
-        Assert.Equal("noRoot", answer.Type);
+        Assert.Equal(Reached.NoRoot, answer.Type);
     }
 
     /// <summary>One sentence for every root that is no task's copy, typed by the reason so a program can tell them apart.</summary>
     [Theory]
-    [InlineData("/etc", "outside")]
+    [InlineData("/etc", Reached.Outside)]
     [InlineData("/workspaces/../etc", "malformed")]
-    [InlineData("/workspaces", "outside")]
+    [InlineData("/workspaces", Reached.Outside)]
     [InlineData("/workspaces/Task_1/step-1", "notATask")]
     [InlineData("/workspaces/0c2b9e1f/../../etc", "malformed")]
-    [InlineData("/workspaces-old/0c2b9e1f/step-1", "outside")]
+    [InlineData("/workspaces-old/0c2b9e1f/step-1", Reached.Outside)]
     public void Session_CopyOutsideTheWorkspaces_IsRefused(string root, string type)
     {
         var stage = new Stage();
@@ -105,14 +106,14 @@ public sealed class TaskEnvironmentsTests
     /// said nothing a program could branch on.
     /// </summary>
     [Theory]
-    [InlineData("status", null, "noRoot")]
-    [InlineData("down", null, "noRoot")]
-    [InlineData("http", null, "noRoot")]
-    [InlineData("logs", null, "noRoot")]
-    [InlineData("status", "/etc", "outside")]
+    [InlineData("status", null, Reached.NoRoot)]
+    [InlineData("down", null, Reached.NoRoot)]
+    [InlineData("http", null, Reached.NoRoot)]
+    [InlineData("logs", null, Reached.NoRoot)]
+    [InlineData("status", "/etc", Reached.Outside)]
     [InlineData("down", "/workspaces/../etc", "malformed")]
     [InlineData("http", "/workspaces/Task_1/step-1", "notATask")]
-    [InlineData("logs", "/etc", "outside")]
+    [InlineData("logs", "/etc", Reached.Outside)]
     public async Task CallReadingTheSession_RootThatIsNoCopy_IsRefusedTypedAsUpIs(string tool, string? root, string type)
     {
         var environments = new Stage().Environments(root);
@@ -266,19 +267,17 @@ public sealed class TaskEnvironmentsTests
         stage.Jobs.Failure = new SchedulerException("Connection refused");
         var environments = stage.Environments();
 
-        (string? Error, string? Hint) answer = tool switch
+        Answer<object> answer = tool switch
         {
-            "up" => Said(await environments.UpAsync(environments.Session().Value!, CancellationToken.None)),
-            "status" => Said(await environments.StatusAsync(CancellationToken.None)),
-            "down" => Said(await environments.DownAsync(CancellationToken.None)),
-            "http" => Said(await environments.CallAsync(new HttpCall("GET", "/orders", null, "application/json", []), CancellationToken.None)),
-            "logs" => Said(await environments.LogsAsync("app", null, CancellationToken.None)),
-            _ => Said(await environments.TestAsync(environments.Session().Value!, null, CancellationToken.None))
+            "up" => (await environments.UpAsync(environments.Session().Value!, CancellationToken.None)).As<object>(),
+            "status" => (await environments.StatusAsync(CancellationToken.None)).As<object>(),
+            "down" => (await environments.DownAsync(CancellationToken.None)).As<object>(),
+            "http" => (await environments.CallAsync(new HttpCall("GET", "/orders", null, "application/json", []), CancellationToken.None)).As<object>(),
+            "logs" => (await environments.LogsAsync("app", null, CancellationToken.None)).As<object>(),
+            _ => (await environments.TestAsync(environments.Session().Value!, null, CancellationToken.None)).As<object>()
         };
 
         Assert.Equal(Messages.SchedulerDown(stage.Options.NomadAddress, "Connection refused"), answer.Error);
         Assert.Equal(Messages.SchedulerDownHint, answer.Hint);
     }
-
-    private static (string? Error, string? Hint) Said<T>(Answer<T> answer) => (answer.Error, answer.Hint);
 }

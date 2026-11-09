@@ -5,7 +5,7 @@ namespace Snail.MCP.E2E.Tools;
 
 /// <summary>What each answer of this server carries as its data, inside the envelope <see cref="ToolAnswer"/> writes.</summary>
 /// <remarks>An app that answered 500 or tests that failed are successes of the tool: the failure is the app's, told in the data. Only a call that could not happen is a failure.</remarks>
-public static class AnswerContent
+public static class AnswerFields
 {
     /// <summary>How an answer spells an enum value: camel case, the way the descriptions name it (<c>buildFailed</c>, <c>noTests</c>).</summary>
     public const WordCase Casing = WordCase.Camel;

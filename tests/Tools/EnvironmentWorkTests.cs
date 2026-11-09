@@ -2,6 +2,7 @@ using ModelContextProtocol.Protocol;
 using Snail.MCP.E2E.Application;
 using Snail.MCP.E2E.Tests.Application;
 using Snail.MCP.E2E.Tools;
+using Snail.Sdk.Mcp.Hosting;
 using Snail.Sdk.Mcp.Hosting.Jobs;
 
 namespace Snail.MCP.E2E.Tests.Tools;
@@ -116,7 +117,7 @@ public sealed class EnvironmentWorkTests
         var down = await _stage.Environments().DownAsync(CancellationToken.None);
         var ended = await EndOfAsync(raise);
 
-        Assert.True(down.Error is null);
+        Assert.True(down.IsSuccess);
         Assert.Equal(JobState.Failed, ended.State);
         Assert.Equal(Messages.StoppedByDown, ended.Message);
         Assert.Equal(Messages.NotRaisedHint, ended.Hint);
@@ -176,7 +177,7 @@ public sealed class EnvironmentWorkTests
         var result = await waiting.WaitAsync(Patience);
 
         Assert.True(result.IsError);
-        Assert.Equal("cancelled", result.Type());
+        Assert.Equal(ToolFailures.Cancelled, result.Type());
         Assert.Equal(Messages.NotRaisedHint, result.Hint());
         Assert.Equal(JobState.Cancelled, result.Report()!.State);
     }

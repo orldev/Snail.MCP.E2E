@@ -21,13 +21,13 @@ public static class Calls
         string type = string.IsNullOrWhiteSpace(contentType) ? DefaultContentType : contentType.Trim();
 
         if (!MediaTypeHeaderValue.TryParse(type, out _))
-            return Answer.Failed<HttpCall>(Messages.BadContentType(type));
+            return Answer.Failed(Messages.BadContentType(type));
 
         var pairs = new List<KeyValuePair<string, string>>();
         foreach (string header in headers ?? [])
         {
             if (HeaderOf(header, hasBody: sent is not null) is not { } pair)
-                return Answer.Failed<HttpCall>(Messages.BadHeader(header));
+                return Answer.Failed(Messages.BadHeader(header));
 
             pairs.Add(pair);
         }

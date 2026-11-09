@@ -35,16 +35,16 @@ public sealed class FileManifests(IOptions<E2EOptions> options) : IManifests
         var file = new FileInfo(Path.Combine(copy, relative));
 
         if (IsLinkOnTheWay(copy, relative))
-            return Answer.Failed<EnvironmentManifest>(Messages.BadManifest(relative, "it is a link, and the manifest is read only from a file of the copy itself"), Messages.NoManifestHint);
+            return Answer.Failed(Messages.BadManifest(relative, "it is a link, and the manifest is read only from a file of the copy itself"), Messages.NoManifestHint);
 
         if (!file.Exists)
-            return Answer.Failed<EnvironmentManifest>(Messages.NoManifest(relative), Messages.NoManifestHint);
+            return Answer.Failed(Messages.NoManifest(relative), Messages.NoManifestHint);
 
         if (file.Length == 0)
-            return Answer.Failed<EnvironmentManifest>(Messages.BadManifest(relative, "it is empty or not a regular file"), Messages.NoManifestHint);
+            return Answer.Failed(Messages.BadManifest(relative, "it is empty or not a regular file"), Messages.NoManifestHint);
 
         if (file.Length > MaxBytes)
-            return Answer.Failed<EnvironmentManifest>(Messages.BadManifest(relative, $"it is {file.Length} bytes, more than {MaxBytes}"));
+            return Answer.Failed(Messages.BadManifest(relative, $"it is {file.Length} bytes, more than {MaxBytes}"));
 
         ManifestFile? read;
         try
@@ -53,20 +53,20 @@ public sealed class FileManifests(IOptions<E2EOptions> options) : IManifests
         }
         catch (JsonException exception)
         {
-            return Answer.Failed<EnvironmentManifest>(Messages.BadManifest(relative, exception.Message), Messages.NoManifestHint);
+            return Answer.Failed(Messages.BadManifest(relative, exception.Message), Messages.NoManifestHint);
         }
         catch (TimeoutException)
         {
-            return Answer.Failed<EnvironmentManifest>(Messages.BadManifest(relative, $"it was not read in {ReadTimeout.TotalSeconds:0} seconds, which a regular file is"), Messages.NoManifestHint);
+            return Answer.Failed(Messages.BadManifest(relative, $"it was not read in {ReadTimeout.TotalSeconds:0} seconds, which a regular file is"), Messages.NoManifestHint);
         }
 
         if (read is null)
-            return Answer.Failed<EnvironmentManifest>(Messages.BadManifest(relative, "it is empty"), Messages.NoManifestHint);
+            return Answer.Failed(Messages.BadManifest(relative, "it is empty"), Messages.NoManifestHint);
 
         var manifest = read.ToManifest();
         var problems = ManifestRules.Problems(manifest);
 
-        return problems.Count == 0 ? Answer.Ok(manifest) : Answer.Failed<EnvironmentManifest>(Messages.ManifestProblems(relative, problems));
+        return problems.Count == 0 ? Answer.Ok(manifest) : Answer.Failed(Messages.ManifestProblems(relative, problems));
     }
 
     /// <summary>Whether the manifest, or a folder between the copy and it, is a link.</summary>

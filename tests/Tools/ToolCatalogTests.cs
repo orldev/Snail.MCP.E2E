@@ -30,14 +30,14 @@ public sealed partial class ToolCatalogTests
     public void States_EveryEnvironmentState_IsNamed()
     {
         foreach (var state in Enum.GetValues<EnvironmentState>())
-            Assert.Contains(ToolAnswer.Word(state, AnswerContent.Casing), Words(ToolDescriptions.States));
+            Assert.Contains(ToolAnswer.Word(state, AnswerFields.Casing), Words(ToolDescriptions.States));
     }
 
     [Fact]
     public void Outcomes_EveryTestOutcome_IsNamed()
     {
         foreach (var outcome in Enum.GetValues<TestOutcome>())
-            Assert.Contains(ToolAnswer.Word(outcome, AnswerContent.Casing), Words(ToolDescriptions.Outcomes));
+            Assert.Contains(ToolAnswer.Word(outcome, AnswerFields.Casing), Words(ToolDescriptions.Outcomes));
     }
 
     /// <summary>Every number a description names is the default it describes: a limit changed in code fails here until the text says it.</summary>

@@ -15,6 +15,9 @@ public static class ServerGuidance
         e2e_status says where it stands without waiting; e2e_down stops it when you are done.
 
         The project describes its environment in .snail/environment.json. Without one, e2e_up says how to write it.
-        Every answer is JSON with an ok flag. When ok is false nothing happened: read error and hint.
+        Every answer is JSON with an ok flag, and a failed call is also flagged isError. When ok is false, read error and
+        hint and fix the call instead of retrying it verbatim; type names the kind of failure. Tests that failed and an app
+        that answered 500 are successes, told in the data. A raise or a test run whose job ended failed answers ok false
+        too: the job had started, and what it did still stands.
         """;
 }

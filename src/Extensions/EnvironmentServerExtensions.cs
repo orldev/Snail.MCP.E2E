@@ -37,7 +37,7 @@ public static class EnvironmentServerExtensions
             builder.Services
                 .AddMcpServer(options =>
                 {
-                    options.ServerInfo = Snail.Sdk.Mcp.Hosting.ServerIdentity.Of(typeof(EnvironmentServerExtensions).Assembly);
+                    options.ServerInfo = ServerIdentity.Of(typeof(EnvironmentServerExtensions).Assembly);
                     options.ServerInstructions = ServerGuidance.Instructions;
                 })
                 .ExplainFailures()

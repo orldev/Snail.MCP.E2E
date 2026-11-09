@@ -1,4 +1,5 @@
 using Snail.Sdk.Mcp.Hosting.Jobs;
+using Snail.Sdk.Mcp.Hosting.Sessions;
 using Snail.Sdk.Mcp.JobClient;
 
 namespace Snail.MCP.E2E.Tests.Tools;
@@ -83,6 +84,7 @@ public sealed class ProcessContractTests : IAsyncLifetime
         var result = await session.CallToolAsync("e2e_up", cancellationToken: cancellation.Token);
 
         Assert.True(result.IsError);
+        Assert.Equal(Reached.NoRoot, result.Type());
         Assert.Contains("?root=", result.Text(), StringComparison.Ordinal);
     }
 
@@ -144,6 +146,7 @@ public sealed class ProcessContractTests : IAsyncLifetime
         var result = await session.CallToolAsync("e2e_up", cancellationToken: cancellation.Token);
 
         Assert.True(result.IsError);
+        Assert.Equal("malformed", result.Type());
         Assert.StartsWith("The working copy", result.Error(), StringComparison.Ordinal);
     }
 

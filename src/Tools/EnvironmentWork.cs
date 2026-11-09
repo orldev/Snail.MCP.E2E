@@ -39,11 +39,11 @@ public sealed class EnvironmentWork(TaskEnvironments environments, EnvironmentLe
 
     /// <summary>Raises the environment as a job and answers within the wait.</summary>
     public Task<CallToolResult> RaiseAsync(int wait, CancellationToken cancellationToken) =>
-        RunAsync(LeaseKinds.Up, null, async (copy, token) => (await environments.UpAsync(copy, token)).Map(status => AnswerContent.Of(status)), wait, cancellationToken);
+        RunAsync(LeaseKinds.Up, null, async (copy, token) => (await environments.UpAsync(copy, token)).Map(status => AnswerFields.Of(status)), wait, cancellationToken);
 
     /// <summary>Runs the end-to-end tests as a job and answers within the wait.</summary>
     public Task<CallToolResult> TestAsync(string? filter, int wait, CancellationToken cancellationToken) =>
-        RunAsync(LeaseKinds.Test, filter, async (copy, token) => (await environments.TestAsync(copy, filter, token)).Map(report => AnswerContent.Of(report)), wait, cancellationToken);
+        RunAsync(LeaseKinds.Test, filter, async (copy, token) => (await environments.TestAsync(copy, filter, token)).Map(report => AnswerFields.Of(report)), wait, cancellationToken);
 
     /// <summary>
     /// What the model reads of a job: the tool's own answer once the job ended — the data its work answered, or the

@@ -23,7 +23,7 @@ public static class EnvironmentRegistrationExtensions
             services.AddSingleton<IAppCalls, HttpAppCalls>();
             services.AddSingleton<TaskEnvironments>();
 
-            services.AddNomad(nomad => nomad.Address = Snail.MCP.E2E.Configuration.E2ESettings.Read()[nameof(E2EOptions.NomadAddress)] ?? new E2EOptions().NomadAddress);
+            services.AddNomad(nomad => nomad.Address = E2ESettings.Read()[nameof(E2EOptions.NomadAddress)] ?? new E2EOptions().NomadAddress);
             services
                 .AddHttpClient(HttpAppCalls.Client, client => client.Timeout = HttpAppCalls.Timeout)
                 .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false });
